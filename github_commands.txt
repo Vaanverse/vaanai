@@ -1,5 +1,7 @@
+git remote set-url origin https://UniverGenTechnologies@github.com/Vaanverse/vaanai.git
+git push origin dev
 
- git remote add origin https://github.com/ThiranEnterprises/vaanai.git
+ git remote add origin https://github.com/Vaanverse/vaanai.git
 
 git checkout -b dev
 
@@ -8,9 +10,9 @@ git checkout dev
 
 
 git add .
-git commit -m " moved index file"
+git commit -m "UniverGen Github and Supabase updated a lot of files"
 git push -u origin dev      # the -u is only needed the very first push; just `git push` after that
-
+git push origin dev
 
 git checkout main
 git pull origin main
