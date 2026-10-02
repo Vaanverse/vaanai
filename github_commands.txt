@@ -10,8 +10,10 @@ git checkout dev
 
 
 git add .
-git commit -m "UniverGen Github and Supabase updated a lot of files"
+git commit -m "agent  file"
 git push -u origin dev      # the -u is only needed the very first push; just `git push` after that
+
+optional
 git push origin dev
 
 git checkout main
