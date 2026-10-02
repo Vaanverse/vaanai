@@ -108,12 +108,14 @@ def search_granules(
     start_date: str | None,
     end_date: str | None,
     max_results: int,
+    cloud_cover: float | None = None,
 ) -> list:
     """
     Searches CMR for individual data files ("granules") for a given dataset.
 
     A granule is one scene/tile at one point in time — this is the thing
     you actually download, as opposed to the dataset (collection) itself.
+    If cloud_cover is given (0-100), only tiles at or below that cloud % are returned.
     """
     kwargs: dict = {"short_name": short_name, "count": max_results}
 
@@ -121,6 +123,8 @@ def search_granules(
         kwargs["bounding_box"] = bbox  # (min_lon, min_lat, max_lon, max_lat)
     if start_date or end_date:
         kwargs["temporal"] = (start_date, end_date)
+    if cloud_cover is not None:
+        kwargs["cloud_cover"] = (0, cloud_cover)   # tile-level cloud % filter
 
     log.info("Searching for granules: %s", kwargs)
     granules = earthaccess.search_data(**kwargs)

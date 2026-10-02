@@ -85,7 +85,9 @@
     margin-bottom: 20px;
   }
   .images figure { margin: 0; position: relative; background: var(--panel); }
-  .images img { display: block; width: 100%; height: auto; aspect-ratio: 1; object-fit: cover; }
+  /* Show the whole bbox image at its natural shape (no square crop). Before and
+     after are always the same size now, so the pair lines up exactly. */
+  .images img { display: block; width: 100%; height: auto; }
   .images figcaption {
     position: absolute; bottom: 8px; left: 10px;
     font-family: 'IBM Plex Mono', monospace;
@@ -152,14 +154,14 @@
 
 <script>
   // --- Fill in your own Supabase project values below ---
-  const SUPABASE_URL = "https://hzsamzgpyztrhhywdxrp.supabase.co";
-  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh6c2FtemdweXp0cmhoeXdkeHJwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA1MTQ0MTcsImV4cCI6MjEwNjA5MDQxN30.xB73bnq2-tLHDZGQKAEeDAA-SDuMAJ3i4rTOc8ihTUY"; // the public 'anon' key — safe to expose here, NOT the service_role key
+  const SUPABASE_URL = "https://yucfgjnkyebvwywxekqq.supabase.co";
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1Y2Znam5reWVidnd5d3hla3FxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA5MjIxNzEsImV4cCI6MjEwNjQ5ODE3MX0.m9-5f5bJIsReCykcVD8i1qy55CqQYcpSAdk7Gf3DuZk"; // the public 'anon' key — safe to expose here, NOT the service_role key
 
   async function loadInsights() {
     const container = document.getElementById('entries');
     try {
       const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/insights?select=*&order=created_at.desc&limit=25`,
+        `${SUPABASE_URL}/rest/v1/water_insights?select=*&order=created_at.desc&limit=25`,
         {
           headers: {
             apikey: SUPABASE_ANON_KEY,
@@ -206,7 +208,7 @@
         <div class="stat-row">
           <div>
             <div class="change-figure ${changeClass}">${changeSign}${row.change_pct}%</div>
-            <div class="change-label">${row.metric || 'water area'} change</div>
+            <div class="change-label">${metricLabel(row.metric)} change</div>
           </div>
           <div class="confidence"><span class="dot ${confClass}"></span>${confClass} confidence</div>
         </div>
@@ -215,10 +217,18 @@
     `;
   }
 
+  function metricLabel(metric) {
+    const labels = {
+      water_area_km2: 'water area (km²)',
+    };
+    return labels[metric] || metric || 'water area';
+  }
+  
   function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+    
   }
 
   loadInsights();

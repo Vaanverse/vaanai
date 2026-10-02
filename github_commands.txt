@@ -3,8 +3,12 @@
 
 git checkout -b dev
 
+
+git checkout dev
+
+
 git add .
-git commit -m "describe what you changed"
+git commit -m " moved index file"
 git push -u origin dev      # the -u is only needed the very first push; just `git push` after that
 
 
@@ -12,4 +16,6 @@ git checkout main
 git pull origin main
 git merge dev
 git push origin main
+
+
 
