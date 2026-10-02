@@ -7,7 +7,13 @@ on:
 
 jobs:
   run-agent:
-    runs-on: ubuntu-latest
+    # Only ever run on main. Scheduled runs already use main (the default
+    # branch); this also blocks manual "Run workflow" clicks from dev or any
+    # other branch — those runs are skipped instead of writing to Supabase.
+    if: github.ref == 'refs/heads/main'
+    # Pinned (not ubuntu-latest) so GitHub's switch of "latest" to Ubuntu 26
+    # on 19 Oct 2026 can't change the environment under us unannounced.
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false      # one location failing shouldn't cancel the others
       matrix:
@@ -18,8 +24,8 @@ jobs:
           # - name: "Lake Powell, UT/AZ"
           #   bbox: "-111.25 37.00 -110.75 37.50"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5        # v5+ runs on Node 24 (v4 used deprecated Node 20)
+      - uses: actions/setup-python@v6    # v6+ runs on Node 24 (v5 used deprecated Node 20)
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
