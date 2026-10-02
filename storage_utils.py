@@ -46,8 +46,7 @@ def _stretch_to_uint8(band: np.ndarray, max_reflectance: float = 3000) -> np.nda
     result[~valid_mask] = 0  # render fill/no-data pixels as black
     return result
 
-
-def generate_preview_png(folder: str, output_path: str) -> str:
+def generate_preview_png(folder: str, output_path: str, bbox=None) -> str:
     """Builds a true-color (Red/Green/Blue) PNG from an HLSL30 scene folder
     and saves it to output_path. Returns output_path for convenience.
 
@@ -57,12 +56,15 @@ def generate_preview_png(folder: str, output_path: str) -> str:
     """
     import glob
 
+    from compute_water_change import read_band as read_clipped
+
     def read_band(code: str) -> np.ndarray:
-        matches = glob.glob(os.path.join(folder, f"*{code}*.tif"))
+        matches = sorted(glob.glob(os.path.join(folder, f"*{code}*.tif")))
         if not matches:
             raise ValueError(f"Could not find band {code} in {folder} for preview image.")
-        with rasterio.open(matches[0]) as src:
-            return src.read(1).astype("float32")
+        # With a bbox, all tiles are stitched onto the same fixed grid, so the
+        # before and after images always come out exactly the same size.
+        return read_clipped(matches if bbox is not None else matches[0], bbox).astype("float32")
 
     red = _stretch_to_uint8(read_band("B04"))
     green = _stretch_to_uint8(read_band("B03"))
@@ -99,7 +101,7 @@ def upload_image(local_path: str) -> str:
 
 
 def save_insight(record: dict) -> None:
-    """Inserts one row into the `insights` table. `record` keys should match
+    """Inserts one row into the `water_insights` table. `record` keys should match
     the table's columns (location, before_date, after_date, before_value,
     after_value, change_pct, summary, confidence, before_image_url,
     after_image_url) — see the SQL in the build plan for the exact schema."""
@@ -107,5 +109,5 @@ def save_insight(record: dict) -> None:
     # upsert (not insert) so re-running the same location/date-pair comparison
     # updates the existing row instead of creating a duplicate. Requires the
     # unique constraint on (location, before_date, after_date) — see build notes.
-    client.table("insights").upsert(record, on_conflict="location,before_date,after_date").execute()
+    client.table("water_insights").upsert(record, on_conflict="location,before_date,after_date").execute()
     log.info("Saved insight to database: %s", record.get("location"))

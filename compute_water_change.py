@@ -24,6 +24,7 @@ to override.
 import argparse
 import glob
 import logging
+import math
 import os
 import sys
 from pathlib import Path
@@ -32,12 +33,70 @@ import numpy as np
 import rasterio
 import requests
 from dotenv import load_dotenv
+from rasterio.transform import from_origin
+from rasterio.warp import Resampling, reproject, transform_bounds
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
 PIXEL_AREA_M2 = 30 * 30  # HLS pixels are 30m x 30m
 
+
+def _aoi_grid(bbox, res: int = 30):
+    """A fixed 30 m grid covering the bbox, in the UTM zone of the bbox centre.
+    Every scene is drawn onto this same grid, so before/after images and
+    arrays always have exactly the same width and height — no matter which
+    satellite tile(s) the data came from."""
+    min_lon, min_lat, max_lon, max_lat = bbox
+    zone = int(((min_lon + max_lon) / 2 + 180) // 6) + 1
+    epsg = (32600 if (min_lat + max_lat) / 2 >= 0 else 32700) + zone
+    left, bottom, right, top = transform_bounds("EPSG:4326", f"EPSG:{epsg}", *bbox)
+    left, top = math.floor(left / res) * res, math.ceil(top / res) * res
+    width, height = math.ceil((right - left) / res), math.ceil((top - bottom) / res)
+    return f"EPSG:{epsg}", from_origin(left, top, res, res), width, height
+
+
+def read_band(paths, bbox=None) -> np.ndarray:
+    """Reads one band.
+    - Without bbox: reads the first file as-is (whole tile).
+    - With bbox: stitches EVERY tile file onto the fixed bbox grid (see
+      _aoi_grid). Any part of the bbox that no tile covers is left as no-data
+      (-9999 for reflectance bands, 255 for Fmask), which the Fmask check then
+      counts as "bad" — so a coverage gap shows up as a warning instead of
+      silently shrinking the measured lake."""
+    if isinstance(paths, str):
+        paths = [paths]
+    if bbox is None:
+        with rasterio.open(paths[0]) as src:
+            return src.read(1)
+
+    crs, transform, width, height = _aoi_grid(bbox)
+    out = None
+    for p in paths:
+        with rasterio.open(p) as src:
+            nodata = src.nodata if src.nodata is not None else (255 if src.dtypes[0] == "uint8" else -9999)
+            if out is None:
+                out = np.full((height, width), nodata, dtype=src.dtypes[0])
+            reproject(
+                source=rasterio.band(src, 1), destination=out,
+                src_transform=src.transform, src_crs=src.crs, src_nodata=nodata,
+                dst_transform=transform, dst_crs=crs, dst_nodata=nodata,
+                resampling=Resampling.nearest, init_dest_nodata=False,
+            )
+    return out
+
+
+def find_band_files(folder: str, band_code: str) -> list[str]:
+    """All files in `folder` for a band code — one per tile when a scene spans
+    several tiles (common for areas near tile/UTM-zone edges, like Lake Mead)."""
+    matches = sorted(glob.glob(os.path.join(folder, f"*{band_code}*.tif")))
+    if not matches:
+        raise ValueError(
+            f"No file matches band code '{band_code}'. "
+            f"Available band codes in this folder: {', '.join(list_band_codes(folder))}. "
+            "HLS band codes are zero-padded (e.g. 'B03' for green, 'B05' for NIR)."
+        )
+    return matches
 
 def list_band_codes(folder: str) -> list[str]:
     """Returns the sorted, deduplicated band codes present in a scene folder
@@ -88,7 +147,7 @@ _FMASK_CLOUD_SHADOW_BIT = 3
 _FMASK_SNOW_BIT = 4
 
 
-def read_bad_pixel_mask(folder: str) -> tuple[np.ndarray, float]:
+def read_bad_pixel_mask(folder: str, bbox=None) -> tuple[np.ndarray, float]:
     """Reads the Fmask band and returns (bad_pixel_mask, bad_pixel_fraction).
     bad_pixel_mask is True wherever a pixel is cloud, cloud-adjacent, cloud
     shadow, or snow/ice -- all of which can look like "water" to a simple
@@ -96,9 +155,8 @@ def read_bad_pixel_mask(folder: str) -> tuple[np.ndarray, float]:
     much of the whole scene was excluded, which is a useful data-quality
     signal: a heavily clouded scene should be treated with lower confidence,
     or re-fetched for a clearer date, rather than trusted blindly."""
-    fmask_path = find_band_file(folder, "Fmask")
-    with rasterio.open(fmask_path) as src:
-        fmask = src.read(1).astype("uint8")
+    fmask_files = find_band_files(folder, "Fmask") if bbox is not None else find_band_file(folder, "Fmask")
+    fmask = read_band(fmask_files, bbox).astype("uint8")
 
     is_cloud = (fmask >> _FMASK_CLOUD_BIT) & 1
     is_cloud_adjacent = (fmask >> _FMASK_CLOUD_ADJACENT_BIT) & 1
@@ -110,15 +168,14 @@ def read_bad_pixel_mask(folder: str) -> tuple[np.ndarray, float]:
     return bad_mask, bad_fraction
 
 
-def compute_ndwi(green_path: str, nir_path: str, bad_pixel_mask: np.ndarray | None = None) -> np.ndarray:
-    """Reads two single-band GeoTIFFs and returns the NDWI array. If
+def compute_ndwi(green_path, nir_path, bad_pixel_mask: np.ndarray | None = None, bbox=None) -> np.ndarray:
+    """Reads the green and NIR bands (a single path, or a list of per-tile
+    paths when bbox is given) and returns the NDWI array. If
     bad_pixel_mask is given (see read_bad_pixel_mask), those pixels are
     excluded (set to NaN) before the water-area calculation, so clouds/snow
     don't get miscounted as water."""
-    with rasterio.open(green_path) as g_src:
-        green = g_src.read(1).astype("float32")
-    with rasterio.open(nir_path) as n_src:
-        nir = n_src.read(1).astype("float32")
+    green = read_band(green_path, bbox).astype("float32")
+    nir = read_band(nir_path, bbox).astype("float32")
 
     if green.shape != nir.shape:
         log.error("Band shape mismatch: green=%s nir=%s", green.shape, nir.shape)
