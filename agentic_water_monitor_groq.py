@@ -247,6 +247,8 @@ TOOL_FUNCTIONS = {
 }
 
 _created_folders: list[str] = []  # tracks every temp folder this run creates, for cleanup at the end
+_insight_saved = False  # set True only once a result is actually written to Supabase; main() exits with
+                        # an error if it's still False, so GitHub marks the run red and emails you
 
 
 def cleanup_temp_folders() -> None:
@@ -415,11 +417,13 @@ def persist_result(final_args: dict, location: str) -> None:
 
 
 def _handle_finalize(tool_args: dict, location: str) -> None:
+    global _insight_saved
     print("\n=== FINAL REPORT ===")
     print(f"Confidence: {tool_args.get('confidence', 'unknown')}")
     print(tool_args.get("summary", ""))
     try:
         persist_result(tool_args, location=location)
+        _insight_saved = True
         print("(Saved image pair + result to Supabase.)")
     except Exception as exc:  # noqa: BLE001 - don't let a save failure hide the report itself
         log.error("Failed to persist insight to Supabase: %s", exc)
@@ -646,6 +650,16 @@ def main() -> None:
         run_agent(goal_prompt, api_key, location=args.location)
     finally:
         cleanup_temp_folders()
+
+    # A run that finishes without saving a result is a failure, even if nothing
+    # crashed (e.g. hit MAX_TURNS, a tool code error, or Supabase rejected the
+    # save). Exiting non-zero makes GitHub Actions mark the run red and send the
+    # failure email — otherwise these runs would silently show a green tick.
+    if not _insight_saved:
+        message = f"No insight was saved for {args.location} — see the log above for the reason."
+        print(f"::error::{message}")  # shows as a red annotation on the GitHub run summary
+        log.error(message)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
