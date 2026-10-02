@@ -16,13 +16,17 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false      # one location failing shouldn't cancel the others
+      max-parallel: 1       # run locations one after another, so they don't share Groq's
+                            # free-tier rate limit at the same moment
       matrix:
         location:
           - name: "Lake Mead, NV/AZ"
             bbox: "-114.75 36.00 -114.30 36.25"
+          - name: "Lake Powell, UT/AZ"      # central lake: San Juan + Escalante arms, Bullfrog Bay
+            bbox: "-111.25 37.00 -110.75 37.50"
           # Add more locations here, same shape:
-          # - name: "Lake Powell, UT/AZ"
-          #   bbox: "-111.25 37.00 -110.75 37.50"
+          # - name: "Lake Name, Region"
+          #   bbox: "MIN_LON MIN_LAT MAX_LON MAX_LAT"
     steps:
       - uses: actions/checkout@v5        # v5+ runs on Node 24 (v4 used deprecated Node 20)
       - uses: actions/setup-python@v6    # v6+ runs on Node 24 (v5 used deprecated Node 20)
