@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VaanAI — Earth, Observed</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0B1120;
+    --panel: #121A2E;
+    --panel-line: #223050;
+    --ink: #E7ECF5;
+    --ink-muted: #8B96B3;
+    --cyan: #5EEAD4;
+    --amber: #F0A868;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Inter', sans-serif;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 0 24px; }
+
+  header.hero {
+    padding: 80px 0 56px;
+    border-bottom: 1px solid var(--panel-line);
+  }
+  .eyebrow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    color: var(--cyan);
+    letter-spacing: 0.02em;
+  }
+  h1 {
+    font-family: 'Source Serif 4', serif;
+    font-size: clamp(36px, 6vw, 56px);
+    font-weight: 600;
+    margin: 12px 0 16px;
+    max-width: 14ch;
+  }
+  .hero p {
+    color: var(--ink-muted);
+    max-width: 55ch;
+    font-size: 17px;
+  }
+
+  main { padding: 48px 0 80px; }
+  .entry {
+    border-bottom: 1px solid var(--panel-line);
+    padding: 44px 0;
+  }
+  .entry:first-child { padding-top: 0; }
+
+  .entry-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+  .location {
+    font-family: 'Source Serif 4', serif;
+    font-size: 24px;
+  }
+  .dates {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    color: var(--ink-muted);
+  }
+
+  .images {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+    background: var(--panel-line);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 20px;
+  }
+  .images figure { margin: 0; position: relative; background: var(--panel); }
+  /* Show the whole bbox image at its natural shape (no square crop). Before and
+     after are always the same size now, so the pair lines up exactly. */
+  .images img { display: block; width: 100%; height: auto; }
+  .images figcaption {
+    position: absolute; bottom: 8px; left: 10px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--ink);
+    background: rgba(11,17,32,0.6);
+    padding: 2px 6px;
+    border-radius: 2px;
+  }
+
+  .stat-row {
+    display: flex;
+    align-items: baseline;
+    gap: 24px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .change-figure {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 32px;
+    font-weight: 500;
+  }
+  .change-figure.up { color: var(--cyan); }
+  .change-figure.down { color: var(--amber); }
+  .change-label { color: var(--ink-muted); font-size: 14px; }
+
+  .confidence {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--ink-muted);
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; }
+  .dot.high { background: var(--cyan); }
+  .dot.medium { background: var(--amber); }
+  .dot.low { background: #5B6378; }
+
+  .summary { max-width: 65ch; color: var(--ink); font-size: 15.5px; }
+
+  .state { color: var(--ink-muted); padding: 60px 0; text-align: center; font-family: 'IBM Plex Mono', monospace; font-size: 14px; }
+
+  footer { border-top: 1px solid var(--panel-line); padding: 32px 0; color: var(--ink-muted); font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="hero">
+    <div class="eyebrow">VaanAI · observation log</div>
+    <h1>Earth, observed on a schedule.</h1>
+    <p>Automated readings of water extent and surface change, drawn directly from NASA's open Earth observation archive. No raw imagery — just what changed, and whether it matters.</p>
+  </header>
+
+  <main id="entries">
+    <div class="state">Loading observations…</div>
+  </main>
+
+  <footer>
+    Built on NASA HLS (Harmonized Landsat Sentinel-2) open data. Contains modified Copernicus Sentinel data <span id="year">2026</span>. VaanAI, UniverGen Technologies.
+    <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+  </footer>
+</div>
+
+<script>
+  // --- Fill in your own Supabase project values below ---
+  const SUPABASE_URL = "https://yucfgjnkyebvwywxekqq.supabase.co";
+  const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1Y2Znam5reWVidnd5d3hla3FxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA5MjIxNzEsImV4cCI6MjEwNjQ5ODE3MX0.m9-5f5bJIsReCykcVD8i1qy55CqQYcpSAdk7Gf3DuZk"; // the public 'anon' key — safe to expose here, NOT the service_role key
+
+  async function loadInsights() {
+    const container = document.getElementById('entries');
+    try {
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/water_insights?select=*&order=created_at.desc&limit=25`,
+        {
+          headers: {
+            apikey: SUPABASE_ANON_KEY,
+            Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+          },
+        }
+      );
+      if (!res.ok) throw new Error(`Supabase returned ${res.status}`);
+      const rows = await res.json();
+
+      if (!rows.length) {
+        container.innerHTML = '<div class="state">No observations yet. Check back after the next scheduled run.</div>';
+        return;
+      }
+
+      container.innerHTML = rows.map(renderEntry).join('');
+    } catch (err) {
+      container.innerHTML = `<div class="state">Could not load observations right now. (${err.message})</div>`;
+    }
+  }
+
+  function renderEntry(row) {
+    const changeUp = row.change_pct >= 0;
+    const changeClass = changeUp ? 'up' : 'down';
+    const changeSign = changeUp ? '+' : '';
+    const confClass = (row.confidence || 'low').toLowerCase();
+
+    return `
+      <article class="entry">
+        <div class="entry-meta">
+          <div class="location">${escapeHtml(row.location || 'Unknown location')}</div>
+          <div class="dates">${row.before_date} → ${row.after_date}</div>
+        </div>
+        <div class="images">
+          <figure>
+            <img src="${row.before_image_url}" alt="Before, ${row.before_date}" loading="lazy">
+            <figcaption>${row.before_date}</figcaption>
+          </figure>
+          <figure>
+            <img src="${row.after_image_url}" alt="After, ${row.after_date}" loading="lazy">
+            <figcaption>${row.after_date}</figcaption>
+          </figure>
+        </div>
+        <div class="stat-row">
+          <div>
+            <div class="change-figure ${changeClass}">${changeSign}${row.change_pct}%</div>
+            <div class="change-label">${metricLabel(row.metric)} change</div>
+          </div>
+          <div class="confidence"><span class="dot ${confClass}"></span>${confClass} confidence</div>
+        </div>
+        <p class="summary">${escapeHtml(row.summary || '')}</p>
+      </article>
+    `;
+  }
+
+  function metricLabel(metric) {
+    const labels = {
+      water_area_km2: 'water area (km²)',
+    };
+    return labels[metric] || metric || 'water area';
+  }
+  
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+    
+  }
+
+  loadInsights();
+</script>
+
+</body>
+</html>
