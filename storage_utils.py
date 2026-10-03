@@ -29,6 +29,11 @@ log = logging.getLogger(__name__)
 
 BUCKET_NAME = "insight-images"
 
+# Small areas (e.g. a 4 km box around a small dam) give tiny images at 30 m per
+# pixel (~150 px). Previews whose longest side is below this are enlarged by a
+# whole-number factor so they're comfortable to view. Large areas are unchanged.
+MIN_PREVIEW_PX = 1000
+
 
 def _stretch_to_uint8(band: np.ndarray, max_reflectance: float = 3000) -> np.ndarray:
     """Rescales a raw HLS reflectance band to 0-255 for display, using a FIXED
@@ -71,8 +76,19 @@ def generate_preview_png(folder: str, output_path: str, bbox=None) -> str:
     blue = _stretch_to_uint8(read_band("B02"))
 
     rgb = np.dstack([red, green, blue])
-    Image.fromarray(rgb, mode="RGB").save(output_path)
-    log.info("Saved preview image: %s", output_path)
+    img = Image.fromarray(rgb, mode="RGB")
+
+    # Enlarge small previews. NEAREST + a whole-number factor turns each 30 m
+    # satellite pixel into a crisp square block, instead of blurring it — the
+    # picture gets bigger without pretending to have more detail than the data.
+    # Before and after share the same grid size, so they get the same factor.
+    longest = max(img.size)
+    if longest < MIN_PREVIEW_PX:
+        factor = -(-MIN_PREVIEW_PX // longest)  # ceiling division
+        img = img.resize((img.width * factor, img.height * factor), Image.NEAREST)
+
+    img.save(output_path)
+    log.info("Saved preview image: %s (%dx%d px)", output_path, img.width, img.height)
     return output_path
 
 

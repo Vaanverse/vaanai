@@ -70,7 +70,8 @@ def read_band(paths, bbox=None) -> np.ndarray:
         with rasterio.open(paths[0]) as src:
             return src.read(1)
 
-    crs, transform, width, height = _aoi_grid(bbox)
+    # Keep the data's own resolution: 30 m for NASA HLS, 10 m for Sentinel-2.
+    crs, transform, width, height = _aoi_grid(bbox, band_resolution(paths[0]))
     out = None
     for p in paths:
         with rasterio.open(p) as src:
@@ -84,6 +85,12 @@ def read_band(paths, bbox=None) -> np.ndarray:
                 resampling=Resampling.nearest, init_dest_nodata=False,
             )
     return out
+
+
+def band_resolution(path: str) -> int:
+    """Pixel size in metres of a band file (30 for NASA HLS, 10 for Sentinel-2)."""
+    with rasterio.open(path) as src:
+        return int(round(abs(src.res[0])))
 
 
 def find_band_files(folder: str, band_code: str) -> list[str]:
@@ -193,10 +200,11 @@ def compute_ndwi(green_path, nir_path, bad_pixel_mask: np.ndarray | None = None,
     return ndwi
 
 
-def water_area_km2(ndwi: np.ndarray, threshold: float = 0.0) -> float:
-    """Counts pixels above the NDWI water threshold and converts to km2."""
+def water_area_km2(ndwi: np.ndarray, threshold: float = 0.0, pixel_area_m2: float = PIXEL_AREA_M2) -> float:
+    """Counts pixels above the NDWI water threshold and converts to km2.
+    pixel_area_m2 is 900 for 30 m HLS pixels, 100 for 10 m Sentinel-2 pixels."""
     water_pixels = np.nansum(ndwi > threshold)
-    return float(water_pixels * PIXEL_AREA_M2 / 1_000_000)
+    return float(water_pixels * pixel_area_m2 / 1_000_000)
 
 
 def generate_insight(before_area: float, after_area: float, before_label: str, after_label: str) -> str:

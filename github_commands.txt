@@ -22,4 +22,15 @@ git merge dev
 git push origin main
 
 
+venv\Scripts\activate
+
+deactivate
+
+python agentic_water_monitor_groq.py `
+  --location "6th Mile Dam, Rajapalayam/Tamilnadu" `
+  --bbox 77.464 9.482 77.488 9.506 `
+  --goal "Compare the most recently available clear scene to a scene from roughly one year earlier for this location. Avoid cloudy or snow-covered scenes. Decide if the change is significant and explain a likely driver." `
+  --model "openai/gpt-oss-120b"
+
+
 
