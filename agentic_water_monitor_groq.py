@@ -28,6 +28,7 @@ Usage
 import argparse
 import json
 import logging
+import math
 import os
 import sys
 import tempfile
@@ -39,6 +40,7 @@ from dotenv import load_dotenv
 
 import extract_eo_data as eo
 import compute_water_change as wc
+import sentinel2_data as s2
 import storage_utils as storage
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -47,6 +49,17 @@ log = logging.getLogger(__name__)
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 MODEL = "openai/gpt-oss-20b"  # confirmed available on this account; use --model to try openai/gpt-oss-120b for higher quality
 AOI_BBOX = None
+
+# Data source: NASA HLS (30 m) for large areas, Sentinel-2 L2A (10 m) for small
+# ones such as village reservoirs. "auto" decides from the bbox size.
+DATA_SOURCE = "hls"            # set in main(): "hls" or "s2"
+DATA_RES = 30                  # metres per pixel of the chosen source
+SMALL_AOI_KM2 = 400            # bbox smaller than this (~20 x 20 km) -> Sentinel-2 in "auto"
+SOURCE_LABELS = {"hls": "NASA HLS Landsat (30 m)", "s2": "Sentinel-2 L2A (10 m)"}
+
+# Results whose water area is under this many pixels are saved with confidence
+# "low": ~1.0 km² at 30 m (HLS), ~0.11 km² at 10 m (Sentinel-2).
+MIN_RELIABLE_PIXELS = 1100
 MAX_TURNS = 16  # cloud/snow avoidance can legitimately need several retries per time period
 
 # ---------------------------------------------------------------------------
@@ -59,15 +72,16 @@ TOOLS = [
         "function": {
             "name": "fetch_scene",
             "description": (
-                "Search NASA's HLS (Landsat) archive for the clearest satellite scene over a "
-                "bounding box within a date range, download every tile needed to cover the box "
-                "for that day, and return a local folder path plus scene_date (the actual day "
-                "the picture was taken). Use this whenever you need imagery for a new date range."
+                "Find the clearest satellite scene over a bounding box within a date range, "
+                "download what is needed to cover the box for that day, and return a local "
+                "folder path plus scene_date (the actual day the picture was taken). The data "
+                "source (NASA HLS 30 m for large areas, Sentinel-2 10 m for small ones) is chosen "
+                "automatically. Use this whenever you need imagery for a new date range."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "short_name": {"type": "string", "description": "HLSL30 (Landsat) or HLSS30 (Sentinel-2)."},
+                    "short_name": {"type": "string", "description": "Optional and ignored — the data source is chosen automatically."},
                     "min_lon": {"type": "number"},
                     "min_lat": {"type": "number"},
                     "max_lon": {"type": "number"},
@@ -169,7 +183,33 @@ def _acq_day(granule) -> str:
     return granule["umm"]["GranuleUR"].split(".")[3][:7]
 
 
+def _fetch_scene_s2(args: dict) -> dict:
+    """Sentinel-2 L2A (10 m): picks the clearest day OVER THE BBOX ITSELF (not the
+    whole tile), then saves only the bbox pixels — a few MB instead of ~120 MB."""
+    bbox = (args["min_lon"], args["min_lat"], args["max_lon"], args["max_lat"])
+    try:
+        best = s2.best_scene(bbox, args["start_date"], args["end_date"])
+        if best is None:
+            return {"error": "No Sentinel-2 scenes found for that range. Try a different or wider date range."}
+        day, items, bad, covered = best
+        folder = tempfile.mkdtemp(prefix="vaanai_scene_")
+        _created_folders.append(folder)
+        s2.download_scene(items, AOI_BBOX or bbox, folder)
+        return {
+            "folder": folder,
+            "source": SOURCE_LABELS["s2"],
+            "scene_date": day,
+            "tile_count": len(items),
+            "aoi_coverage_pct": round(covered * 100),
+            "aoi_cloud_pct": round(bad * 100, 1),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc) or repr(exc) or "Unknown error during Sentinel-2 fetch (see logs above)."}
+
+
 def tool_fetch_scene(args: dict) -> dict:
+    if DATA_SOURCE == "s2":
+        return _fetch_scene_s2(args)
     bbox = (args["min_lon"], args["min_lat"], args["max_lon"], args["max_lat"])
     short_name = "HLSL30"   # compute_water_extent assumes Landsat band codes (NIR = B05)
     try:
@@ -204,6 +244,7 @@ def tool_fetch_scene(args: dict) -> dict:
 
         return {
             "folder": folder,
+            "source": SOURCE_LABELS["hls"],
             "scene_date": datetime.strptime(best_day, "%Y%j").date().isoformat(),
             "tile_count": len(chosen),
             "aoi_coverage_pct": round(day_cover(chosen) * 100),
@@ -219,13 +260,15 @@ def tool_compute_water_extent(args: dict) -> dict:
     nir_band = args.get("nir_band", "B05")
     try:
         bad_mask, bad_pct = wc.read_bad_pixel_mask(folder, bbox=AOI_BBOX)
+        green_files = wc.find_band_files(folder, green_band)
         ndwi = wc.compute_ndwi(
-            wc.find_band_files(folder, green_band),
+            green_files,
             wc.find_band_files(folder, nir_band),
             bad_pixel_mask=bad_mask, bbox=AOI_BBOX,
         )
+        res = wc.band_resolution(green_files[0])   # 30 m (HLS) or 10 m (Sentinel-2)
         result = {
-            "water_area_km2": round(wc.water_area_km2(ndwi), 2),
+            "water_area_km2": round(wc.water_area_km2(ndwi, pixel_area_m2=res * res), 3 if res < 30 else 2),
             "cloud_snow_masked_pct": round(bad_pct * 100, 1),
         }
         if bad_pct > 0.10:
@@ -312,7 +355,7 @@ def _try_recover_corrupted_tool_call(response) -> dict | None:
         return None
 
 
-def call_groq(messages: list, api_key: str, max_retries: int = 3) -> dict:
+def call_groq(messages: list, api_key: str, max_retries: int = 3, tool_choice="auto") -> dict:
     """Calls Groq, automatically waiting and retrying on free-tier rate limits (429),
     and on the GPT-OSS-specific 'output_parse_failed' error (a known Groq issue where
     the model's internal reasoning leaks into the response and breaks tool-call
@@ -328,7 +371,7 @@ def call_groq(messages: list, api_key: str, max_retries: int = 3) -> dict:
                 "model": MODEL,
                 "messages": messages,
                 "tools": TOOLS,
-                "tool_choice": "auto",
+                "tool_choice": tool_choice,
                 # GPT-OSS-specific settings (per Groq docs) that keep the model's
                 # internal reasoning out of the response body, which otherwise
                 # sometimes breaks structured tool-call parsing:
@@ -400,6 +443,18 @@ def persist_result(final_args: dict, location: str) -> None:
     after_value = final_args["after_value"]
     change_pct = ((after_value - before_value) / before_value * 100) if before_value else 0.0
 
+    # Small water bodies are only a few hundred pixels, so a handful of
+    # shoreline pixels can swing the % change a lot. Never publish those as
+    # "high"/"medium" confidence, whatever the model says.
+    min_reliable_km2 = MIN_RELIABLE_PIXELS * DATA_RES * DATA_RES / 1_000_000
+    confidence = final_args["confidence"]
+    if max(before_value, after_value) < min_reliable_km2 and confidence != "low":
+        log.warning(
+            "Water area below %.2f km² at %d m (%.3f -> %.3f) — lowering confidence from '%s' to 'low'.",
+            min_reliable_km2, DATA_RES, before_value, after_value, confidence,
+        )
+        confidence = "low"
+
     storage.save_insight(
         {
             "location": location,
@@ -409,7 +464,7 @@ def persist_result(final_args: dict, location: str) -> None:
             "after_value": after_value,
             "change_pct": round(change_pct, 2),
             "summary": final_args["summary"],
-            "confidence": final_args["confidence"],
+            "confidence": confidence,
             "before_image_url": before_url,
             "after_image_url": after_url,
         }
@@ -486,30 +541,50 @@ def _force_finalize(messages: list, api_key: str, computed: dict, folder_dates: 
         }
     )
 
-    response = requests.post(
-        GROQ_URL,
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={
-            "model": MODEL,
-            "messages": messages,
-            "tools": TOOLS,
-            "tool_choice": {"type": "function", "function": {"name": "finalize_report"}},
-            "reasoning_format": "hidden",
-            "reasoning_effort": "low",
-        },
-        timeout=60,
-    )
-    if not response.ok:
-        log.error("Forced finalize call failed: %s", response.text)
-        return False
+    # Same wait-and-retry on rate limits (429) as every other model call — the
+    # forced call used to give up on the first 429, losing a finished result.
+    try:
+        response = call_groq(
+            messages, api_key,
+            tool_choice={"type": "function", "function": {"name": "finalize_report"}},
+        )
+        message = response["choices"][0]["message"]
+        for call in message.get("tool_calls") or []:
+            if call["function"]["name"] == "finalize_report":
+                tool_args = json.loads(call["function"]["arguments"])
+                # Trust our own measurements over numbers the model retyped.
+                if tool_args.get("before_folder") in computed:
+                    tool_args["before_value"] = computed[tool_args["before_folder"]]
+                if tool_args.get("after_folder") in computed:
+                    tool_args["after_value"] = computed[tool_args["after_folder"]]
+                _handle_finalize(tool_args, location)
+                return True
+        log.warning("Forced finalize returned no finalize_report call.")
+    except Exception as exc:  # noqa: BLE001 - fall through to the no-model save below
+        log.error("Forced finalize call failed: %s", exc)
 
-    message = response.json()["choices"][0]["message"]
-    for call in message.get("tool_calls") or []:
-        if call["function"]["name"] == "finalize_report":
-            tool_args = json.loads(call["function"]["arguments"])
-            _handle_finalize(tool_args, location)
-            return True
-    return False
+    # Last resort: the measurements are already done, so save them without the
+    # model. The summary is a plain factual sentence (no guessed driver), and
+    # confidence is "medium" at most since the model never confirmed the pair.
+    log.warning("Saving the computed result directly, without a model-written summary.")
+    before_date = before_meta.get("scene_date") or before_meta["start_date"]
+    after_date = after_meta.get("scene_date") or after_meta["start_date"]
+    b, a = computed[before_folder], computed[after_folder]
+    pct = ((a - b) / b * 100) if b else 0.0
+    _handle_finalize(
+        {
+            "summary": (
+                f"Water surface area changed from {b:.2f} km² on {before_date} "
+                f"to {a:.2f} km² on {after_date} ({pct:+.1f}%)."
+            ),
+            "confidence": "medium",
+            "before_folder": before_folder, "after_folder": after_folder,
+            "before_date": before_date, "after_date": after_date,
+            "before_value": b, "after_value": a,
+        },
+        location,
+    )
+    return True
 
 
 def run_agent(goal: str, api_key: str, location: str) -> None:
@@ -557,7 +632,7 @@ def run_agent(goal: str, api_key: str, location: str) -> None:
                 return
             if _force_finalize(messages, api_key, computed, folder_dates, location, rejected):
                 return
-            log.info("No tool call made, and not enough tracked evidence to force a finalize; ending.")
+            log.info("Model stopped, and fewer than two scenes were measured — nothing to compare; ending.")
             return
 
         stop = False
@@ -619,11 +694,22 @@ def parse_args() -> argparse.Namespace:
         default="Investigate how water extent has changed over time in this area and explain why.",
     )
     parser.add_argument("--model", default=MODEL, help=f"Groq model to use (default: {MODEL})")
+    parser.add_argument(
+        "--source", choices=["auto", "hls", "s2"], default="auto",
+        help=f"Satellite data: 'hls' = NASA HLS 30 m, 's2' = Sentinel-2 10 m, "
+             f"'auto' (default) = Sentinel-2 if the bbox is under {SMALL_AOI_KM2} km², else HLS.",
+    )
     return parser.parse_args()
 
 
+def bbox_area_km2(bbox) -> float:
+    min_lon, min_lat, max_lon, max_lat = bbox
+    mid_lat = math.radians((min_lat + max_lat) / 2)
+    return (max_lon - min_lon) * 111.32 * math.cos(mid_lat) * (max_lat - min_lat) * 110.57
+
+
 def main() -> None:
-    global MODEL, AOI_BBOX
+    global MODEL, AOI_BBOX, DATA_SOURCE, DATA_RES
     load_dotenv()
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -634,7 +720,13 @@ def main() -> None:
     MODEL = args.model
     AOI_BBOX = tuple(args.bbox)
 
-    eo.authenticate()  # NASA credentials still needed for the data-fetching tool
+    area = bbox_area_km2(AOI_BBOX)
+    DATA_SOURCE = args.source if args.source != "auto" else ("s2" if area < SMALL_AOI_KM2 else "hls")
+    DATA_RES = 10 if DATA_SOURCE == "s2" else 30
+    log.info("Area %.1f km² -> using %s.", area, SOURCE_LABELS[DATA_SOURCE])
+
+    if DATA_SOURCE == "hls":
+        eo.authenticate()  # NASA login is only needed for HLS; Sentinel-2 is open, no login
 
     min_lon, min_lat, max_lon, max_lat = args.bbox
     goal_prompt = (
