@@ -10,7 +10,7 @@ git checkout dev
 
 
 git add .
-git commit -m "agent  file"
+git commit -m "rajapalayam related"
 git push -u origin dev      # the -u is only needed the very first push; just `git push` after that
 
 optional
@@ -33,4 +33,4 @@ python agentic_water_monitor_groq.py `
   --model "openai/gpt-oss-120b"
 
 
-
+The 6th Mile Dam water surface grew from about 0.015 km² in early October 2023 to roughly 0.272 km² in mid‑September 2024, an increase of ~0.26 km². This substantial rise is most likely driven by higher monsoon precipitation in 2024, filling the reservoir compared to the drier conditions of the previous year.
