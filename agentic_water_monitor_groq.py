@@ -481,8 +481,9 @@ def _handle_finalize(tool_args: dict, location: str) -> None:
         _insight_saved = True
         print("(Saved image pair + result to Supabase.)")
     except Exception as exc:  # noqa: BLE001 - don't let a save failure hide the report itself
-        log.error("Failed to persist insight to Supabase: %s", exc)
-        print(f"(Warning: could not save to Supabase — {exc})")
+        msg = storage.short_error(exc)   # one line, not a whole Cloudflare HTML page
+        log.error("Failed to persist insight to Supabase: %s", msg)
+        print(f"(Warning: could not save to Supabase — {msg})")
 
 def _compute_missing(folder_dates: dict, computed: dict, rejected: set) -> None:
     """The model sometimes fetches a scene and then stops (or writes its report)
