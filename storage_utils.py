@@ -14,7 +14,13 @@ website can actually display:
    survive after the local/temporary folder is deleted — which matters
    especially on GitHub Actions, where the entire machine is destroyed at
    the end of every run.
+
+The satellite libraries (numpy, rasterio via compute_water_change) are only
+imported inside generate_preview_png(), so other agents that just need the
+Supabase helpers (e.g. weekly_news_agent.py) don't have to load them.
 """
+
+from __future__ import annotations   # lets type hints mention np.ndarray without importing numpy
 
 import logging
 import os
@@ -22,8 +28,6 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
-import numpy as np
-import rasterio
 from PIL import Image
 from supabase import create_client
 
@@ -47,6 +51,8 @@ def _stretch_to_uint8(band: np.ndarray, max_reflectance: float = 3000) -> np.nda
     depend on that scene's own content, so two genuinely different scenes
     end up looking inconsistently colored even with no real change between
     them, which would mislead anyone comparing the two pictures."""
+    import numpy as np
+
     valid_mask = band > -9000  # HLS uses -9999 as a "no data" fill value
     stretched = np.clip(band, 0, max_reflectance) / max_reflectance
     result = (stretched * 255).astype(np.uint8)
@@ -63,6 +69,7 @@ def generate_preview_png(folder: str, output_path: str, bbox=None) -> str:
     """
     import glob
 
+    import numpy as np
     from compute_water_change import read_band as read_clipped
 
     def read_band(code: str) -> np.ndarray:
@@ -116,7 +123,7 @@ def short_error(exc: Exception, limit: int = 300) -> str:
     return text[:limit] + ("…" if len(text) > limit else "")
 
 
-def _with_retries(action: str, func):
+def with_retries(action: str, func):
     """Runs func(), retrying on failure. Supabase occasionally returns a
     temporary 5xx (e.g. Cloudflare 520) or drops the connection; a short wait and
     retry almost always succeeds, so one hiccup shouldn't throw away a finished
@@ -131,6 +138,10 @@ def _with_retries(action: str, func):
             log.warning("%s failed (attempt %d/%d): %s — retrying in %ds.",
                         action, attempt + 1, len(RETRY_WAITS) + 1, short_error(exc), wait)
             time.sleep(wait)
+
+
+# Old name, kept so any script still calling storage._with_retries keeps working.
+_with_retries = with_retries
 
 
 def upload_image(local_path: str) -> str:
@@ -148,7 +159,7 @@ def upload_image(local_path: str) -> str:
                 remote_name, f, {"content-type": "image/png", "upsert": "true"}
             )
 
-    _with_retries(f"Uploading {os.path.basename(local_path)}", _upload)
+    with_retries(f"Uploading {os.path.basename(local_path)}", _upload)
 
     public_url = client.storage.from_(BUCKET_NAME).get_public_url(remote_name)
     log.info("Uploaded %s -> %s", local_path, public_url)
@@ -203,7 +214,7 @@ def save_insight(record: dict) -> None:
             return query.execute(), "Updated today's existing"
         return table.insert(row).execute(), "Inserted NEW"
 
-    response, action = _with_retries("Saving insight row", _write)
+    response, action = with_retries("Saving insight row", _write)
 
     if not response.data:
         # Supabase can "succeed" while writing nothing (e.g. a row-level-security

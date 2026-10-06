@@ -1,0 +1,28 @@
+name: Weekly Top Environment News
+
+on:
+  schedule:
+    # Sunday 00:00 Japan time (JST = UTC+9) = Saturday 15:00 UTC.
+    # GitHub cron is always UTC. Scheduled runs can start a few minutes late
+    # when GitHub is busy; the agent still covers the full previous week.
+    - cron: '0 15 * * 6'
+  workflow_dispatch:        # lets you run it by hand from the Actions tab too
+
+jobs:
+  top-news:
+    # Only ever write to Supabase from main (same rule as the water agent).
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - name: Pick, write and save the top 5 environment stories
+        run: python weekly_news_agent.py --model "openai/gpt-oss-120b"
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
