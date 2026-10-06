@@ -75,26 +75,43 @@ button,select,input{font:inherit;color:inherit}
 .stats li{display:flex;align-items:baseline;gap:8px;color:var(--muted);font-size:.95rem}
 .stats b{font-family:var(--f-display);font-size:1.5rem;color:var(--ink);font-variant-numeric:tabular-nums}
 .sample-pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--f-mono);font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;background:var(--surface);border:1px solid var(--line);color:var(--muted);padding:3px 10px;border-radius:999px;margin-left:10px;vertical-align:middle}
-.news{display:grid;grid-template-columns:1.35fr 1fr 1fr;gap:18px;position:relative}
-.news-card{all:unset;box-sizing:border-box;cursor:pointer;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow);transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s;min-width:0}
-.news-card:hover{transform:translateY(-5px);box-shadow:var(--shadow-lift)}
+.sample-pill[hidden]{display:none}
+/* Top news slider (5 sliding tiles, fed by the weekly news agent) */
+.slider{position:relative;margin-top:4px}
+.slider-track{display:grid;grid-auto-flow:column;grid-auto-columns:calc((100% - 2 * 18px) / 2.6);gap:18px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-behavior:smooth;overscroll-behavior-x:contain;padding:8px 2px 18px;margin:0;list-style:none;scrollbar-width:none}
+.slider-track::-webkit-scrollbar{display:none}
+@media (max-width:1000px){.slider-track{grid-auto-columns:calc((100% - 18px) / 1.7)}}
+@media (max-width:620px){.slider-track{grid-auto-columns:88%;gap:14px}}
+.slide{scroll-snap-align:start;min-width:0;display:flex}
+.news-card{all:unset;box-sizing:border-box;cursor:pointer;display:flex;flex-direction:column;width:100%;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;box-shadow:var(--shadow);transition:transform .35s cubic-bezier(.2,.8,.2,1),box-shadow .35s;min-width:0}
+.news-card:hover{transform:translateY(-6px);box-shadow:var(--shadow-lift)}
 .news-card:focus-visible{outline:3px solid var(--blue);outline-offset:3px}
-.news-card .body{padding:14px 16px 16px;display:flex;flex-direction:column;gap:6px}
-.news-card h3{font-family:var(--f-display);font-weight:700;font-size:1.06rem;line-height:1.25;margin:0;text-wrap:balance}
-.news-card p{margin:0;color:var(--muted);font-size:.95rem}
-.news-card.lead{grid-row:span 2}
-.news-card.lead h3{font-size:1.35rem}
-.news-card.lead .thumb{aspect-ratio:16/9}
-.news-card:not(.lead) .thumb{aspect-ratio:16/7}
-@media (max-width:700px){.week-orbit{display:none}}
-@media (max-width:900px){.news{grid-template-columns:1fr 1fr}.news-card.lead{grid-column:1/-1;grid-row:auto}}
-@media (max-width:560px){.news{grid-template-columns:1fr}}
+.news-card .thumb{aspect-ratio:16/10}
+.news-card .body{padding:14px 16px 16px;display:flex;flex-direction:column;gap:6px;flex:1}
+.news-card .when{font-family:var(--f-mono);font-size:.74rem;color:var(--muted);letter-spacing:.02em}
+.news-card h3{font-family:var(--f-display);font-weight:700;font-size:1.12rem;line-height:1.25;margin:0;text-wrap:balance}
+.news-card p{margin:0;color:var(--muted);font-size:.95rem;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.news-card .more{margin-top:auto;padding-top:6px;color:var(--blue);font-weight:600;font-size:.92rem;display:inline-flex;align-items:center;gap:6px}
+.news-card .more svg{width:16px;height:16px;transition:transform .3s}
+.news-card:hover .more svg{transform:translateX(4px)}
+.rank{position:absolute;right:10px;top:10px;font-family:var(--f-display);font-weight:800;font-size:.95rem;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;background:var(--blue);color:var(--blue-ink);box-shadow:var(--shadow)}
+.credit{position:absolute;right:8px;bottom:8px;font-size:.68rem;background:rgba(6,19,42,.62);color:#fff;padding:2px 7px;border-radius:6px;pointer-events:none}
+.snav{position:absolute;top:calc(50% - 30px);width:44px;height:44px;border-radius:50%;border:1px solid var(--line);background:var(--surface);color:var(--blue);box-shadow:var(--shadow);cursor:pointer;display:grid;place-items:center;z-index:2;transition:transform .2s,background .2s,opacity .2s}
+.snav:hover{background:var(--blue-soft);transform:scale(1.06)}
+.snav:disabled{opacity:0;pointer-events:none}
+.snav svg{width:20px;height:20px}
+.snav.prev{left:-14px}.snav.next{right:-14px}
+@media (max-width:620px){.snav{display:none}}
+.dots{display:flex;justify-content:center;gap:8px;margin-top:2px}
+.dots button{width:9px;height:9px;padding:0;border-radius:999px;border:0;background:var(--line);cursor:pointer;transition:width .3s,background .3s}
+.dots button[aria-current="true"]{width:26px;background:var(--blue)}
+.news-empty{border:1.5px dashed var(--line);border-radius:var(--r);padding:30px 20px;text-align:center;color:var(--muted);background:var(--surface)}
 
 /* Thumbs (shared by news cards and tiles) */
 .thumb{position:relative;overflow:hidden;background:var(--blue-soft);max-width:100%}
-.thumb canvas{position:absolute;inset:0;width:100%;height:100%;display:block;transform:scale(1.01);transition:transform 6s cubic-bezier(.15,.7,.2,1)}
+.thumb canvas,.thumb img{position:absolute;inset:0;width:100%;height:100%;display:block;object-fit:cover;transform:scale(1.01);transition:transform 6s cubic-bezier(.15,.7,.2,1)}
 .thumb::after{content:"";position:absolute;left:0;right:0;top:-30%;height:30%;background:linear-gradient(180deg,transparent,rgba(255,255,255,.28) 70%,rgba(160,210,255,.55) 92%,transparent);opacity:0;pointer-events:none}
-.news-card:hover .thumb canvas,.tile:hover .thumb canvas{transform:scale(1.12) translate(-2%,-1.5%)}
+.news-card:hover .thumb canvas,.news-card:hover .thumb img,.tile:hover .thumb canvas{transform:scale(1.12) translate(-2%,-1.5%)}
 .news-card:hover .thumb::after,.tile:hover .thumb::after{opacity:1;animation:scan 1.6s cubic-bezier(.4,0,.2,1) infinite}
 @keyframes scan{from{top:-30%}to{top:105%}}
 .chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--f-mono);font-size:.72rem;letter-spacing:.05em;text-transform:uppercase;font-weight:500;padding:4px 9px;border-radius:999px;background:var(--surface);color:var(--ink);border:1px solid var(--line)}
@@ -186,6 +203,11 @@ dialog[open]{animation:pop .3s cubic-bezier(.2,.8,.2,1)}
 .sbtn:hover{border-color:var(--blue);background:var(--blue-soft);transform:translateY(-1px)}
 .sbtn svg{width:18px;height:18px}
 .note{font-size:.84rem;color:var(--muted);margin:0}
+.news-figure{margin:0;position:relative;border-radius:14px;overflow:hidden;background:var(--blue-soft);aspect-ratio:16/9;max-height:46vh;width:100%}
+.news-figure img,.news-figure canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
+.news-figure figcaption{position:absolute;right:10px;bottom:10px;font-size:.74rem;background:rgba(6,19,42,.7);color:#fff;padding:3px 9px;border-radius:7px}
+.sbtn.primary{background:var(--blue);border-color:var(--blue);color:var(--blue-ink)}
+.sbtn.primary:hover{background:var(--blue-deep);border-color:var(--blue-deep);color:var(--bg)}
 .toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translate(-50%,20px);background:var(--blue-deep);color:var(--bg);padding:10px 16px;border-radius:12px;font-weight:600;opacity:0;pointer-events:none;transition:all .3s;z-index:100;max-width:calc(100vw - 32px);text-align:center}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 
@@ -199,7 +221,8 @@ dialog[open]{animation:pop .3s cubic-bezier(.2,.8,.2,1)}
 
 @media (prefers-reduced-motion: reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}
-  .news-card:hover .thumb canvas,.tile:hover .thumb canvas{transform:scale(1.01)}
+  .news-card:hover .thumb canvas,.news-card:hover .thumb img,.tile:hover .thumb canvas{transform:scale(1.01)}
+  .slider-track{scroll-behavior:auto}
 }
 </style>
 </head>
@@ -235,10 +258,15 @@ dialog[open]{animation:pop .3s cubic-bezier(.2,.8,.2,1)}
     </svg>
     <div class="wrap">
       <div class="eyebrow" id="weekRange">This week on Earth</div>
-      <h1 id="weekTitle">What changed on the ground this week</h1>
-      <p class="lede">VaanAI's agents scan open satellite data from NASA, ESA and ISRO every week and flag the places where water, forests, cities and ice are changing fastest. Here are the biggest shifts we picked up.<span class="sample-pill">Prototype · sample records</span></p>
+      <h1 id="weekTitle">What changed on Earth this week</h1>
+      <p class="lede">Every Sunday, VaanAI's news agent reads the week's environment reporting from around the world and picks the five stories that matter most. Tap a story for the full summary.<span class="sample-pill" id="newsPill" hidden>Sample stories</span></p>
       <ul class="stats" id="stats"></ul>
-      <div class="news" id="news"></div>
+      <div class="slider" id="newsSlider" role="region" aria-roledescription="carousel" aria-label="Top 5 environment news stories this week">
+        <ul class="slider-track" id="news" aria-live="polite"></ul>
+        <button class="snav prev" id="newsPrev" type="button" aria-label="Previous story"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>
+        <button class="snav next" id="newsNext" type="button" aria-label="Next story"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button>
+        <div class="dots" id="newsDots" role="group" aria-label="Choose a story"></div>
+      </div>
     </div>
   </section>
 
@@ -283,12 +311,13 @@ dialog[open]{animation:pop .3s cubic-bezier(.2,.8,.2,1)}
           <li>Landsat imagery courtesy of the <a href="https://www.usgs.gov/landsat-missions" target="_blank" rel="noopener">U.S. Geological Survey</a>.</li>
           <li>Active fire data from <a href="https://firms.modaps.eosdis.nasa.gov/" target="_blank" rel="noopener">NASA FIRMS</a> (MODIS and VIIRS).</li>
           <li>Indian context layers from <a href="https://bhuvan.nrsc.gov.in/" target="_blank" rel="noopener">ISRO / NRSC Bhuvan</a>.</li>
+          <li>Weekly news stories are summarised by VaanAI from the original reporting of the credited publishers, which own the articles and images. Each story links to its source.</li>
         </ul>
       </div>
     </div>
     <div class="foot-bottom">
       <span>© 2026 UniverGen Technologies. VaanAI is independent and is not affiliated with or endorsed by NASA, ESA, USGS or ISRO.</span>
-      <span>Preview images on this prototype are illustrative.</span>
+      <span>Insight preview images on this prototype are illustrative. News images belong to the credited publishers.</span>
     </div>
   </div>
 </footer>
@@ -301,6 +330,13 @@ dialog[open]{animation:pop .3s cubic-bezier(.2,.8,.2,1)}
 // Replace with your live domain once hosted (used in share links).
 const SITE_URL = location.href.split('#')[0];
 
+// Supabase (read-only). Paste your project URL and the PUBLIC "anon" key from
+// Supabase -> Project Settings -> API. Never put the service_role key here.
+// Left empty, the news slider shows clearly labelled sample stories.
+const SUPABASE_URL = 'https://yucfgjnkyebvwywxekqq.supabase.co';        // e.g. 'https://abcdxyz.supabase.co'
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inl1Y2Znam5reWVidnd5d3hla3FxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA5MjIxNzEsImV4cCI6MjEwNjQ5ODE3MX0.m9-5f5bJIsReCykcVD8i1qy55CqQYcpSAdk7Gf3DuZk';   // e.g. 'eyJhbGciOi...'
+const NEWS_AUTOPLAY_MS = 6000;  // time each news tile stays before sliding on
+
 /* ---------- Functions (insight types) ---------- */
 const ICONS = {
   water:'<path d="M12 3c-3 4-6 7.5-6 11a6 6 0 0 0 12 0c0-3.5-3-7-6-11z"/>',
@@ -308,7 +344,11 @@ const ICONS = {
   fire:'<path d="M12 3c1 4 5 5.5 5 10a5 5 0 0 1-10 0c0-2.5 1.5-4 2.5-5 .3 2 1.5 3 2.5 3 0-3-1-5 0-8z"/>',
   construction:'<path d="M4 21V10l6-3v14M10 21V4l10 4v13M3 21h18M14 11h2M14 15h2"/>',
   flood:'<path d="M3 9c2-2 4-2 6 0s4 2 6 0 4-2 6 0M3 14c2-2 4-2 6 0s4 2 6 0 4-2 6 0M3 19c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/>',
-  polar:'<path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9M9.5 4.5L12 7l2.5-2.5M9.5 19.5L12 17l2.5 2.5"/>'
+  polar:'<path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9M9.5 4.5L12 7l2.5-2.5M9.5 19.5L12 17l2.5 2.5"/>',
+  globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z"/>',
+  wildlife:'<circle cx="7" cy="9" r="1.8"/><circle cx="12" cy="6.5" r="1.8"/><circle cx="17" cy="9" r="1.8"/><path d="M12 12c-3 0-5.5 3-5.5 5.2 0 1.6 1.4 2.3 2.8 1.8 1-.4 1.8-.6 2.7-.6s1.7.2 2.7.6c1.4.5 2.8-.2 2.8-1.8C17.5 15 15 12 12 12z"/>',
+  energy:'<path d="M13 3L5 13.5h6L10 21l8-10.5h-6z"/>',
+  ocean:'<path d="M3 15c2-2 4-2 6 0s4 2 6 0 4-2 6 0M3 19c2-2 4-2 6 0s4 2 6 0 4-2 6 0"/><circle cx="16" cy="7" r="3"/>'
 };
 const icon = (k, cls='') => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
 
@@ -487,22 +527,173 @@ function thumbHTML(s, r, size='tile'){
   return `<div class="thumb"><canvas data-site="${s.id}" data-rec="0" aria-hidden="true"></canvas><span class="chip">${icon(s.cat)}${esc(CATS[s.cat].label)}</span>${badge(s.cat, r)}</div>`;
 }
 function renderWeek(){
-  $('#weekRange').textContent = `This week on Earth · ${fmtDate(iso(weekStart), {day:'numeric',month:'short'})} – ${fmtDate(newestDate)}`;
   const concerns = inWeek.filter(x => tone(x.s.cat, x.r) === 'bad').length;
   $('#stats').innerHTML = [
-    [SITES.length, 'sites watched'], [inWeek.length, 'updates this week'], [concerns, 'changes flagged'], [Object.keys(CATS).length, 'insight types']
+    [SITES.length, 'sites watched'], [inWeek.length, 'insight updates this week'], [concerns, 'changes flagged'], [Object.keys(CATS).length, 'insight types']
   ].map(([n, l]) => `<li><b>${n}</b>${l}</li>`).join('');
-  const top = [...inWeek].sort((a, b) => Math.abs(pct(b.r)) - Math.abs(pct(a.r)))
-    .filter((x, i, arr) => arr.findIndex(y => y.s.cat === x.s.cat) === i).slice(0, 5);
-  $('#news').innerHTML = top.map((x, i) => `
-    <button class="news-card${i === 0 ? ' lead' : ''}" data-open="${x.s.id}" type="button">
-      ${thumbHTML(x.s, x.r)}
-      <div class="body">
-        <span class="when mono" style="font-size:.74rem;color:var(--muted)">${esc(x.s.district)}, ${esc(x.s.state)} · ${fmtDate(x.r.d)}</span>
-        <h3>${esc(headline(x.s, x.r))}</h3>
-        ${i === 0 ? `<p>${esc(x.r.s)}</p>` : ''}
+}
+
+/* ---------- Top 5 environment news (weekly_top_news via the latest_top_news view) ---------- */
+// category -> [icon, procedural picture style used only for sample stories]
+const NEWS_CATS = {
+  'climate':['globe','polar'], 'weather & disasters':['flood','flood'], 'water':['water','water'],
+  'forests':['vegetation','vegetation'], 'wildlife':['wildlife','vegetation'], 'oceans':['ocean','water'],
+  'pollution':['construction','construction'], 'energy':['energy','construction'], 'ice & polar':['polar','polar'],
+  'agriculture':['vegetation','vegetation'], 'policy':['globe','vegetation']
+};
+const newsCat = c => NEWS_CATS[(c || '').toLowerCase()] || ['globe', 'water'];
+const capFirst = t => t ? t[0].toUpperCase() + t.slice(1) : '';
+const safeUrl = u => /^https?:\/\//i.test(u || '') ? u : '';
+const fmtTS = ts => ts ? new Date(ts).toLocaleDateString('en-IN', {day:'numeric', month:'short', year:'numeric'}) : '';
+
+// Shown only when Supabase isn't configured or can't be reached. Clearly labelled as samples.
+const SAMPLE_NEWS = (() => {
+  const end = new Date(); end.setDate(end.getDate() - ((end.getDay() + 7) % 7)); // last Sunday
+  const d = n => { const x = new Date(end); x.setDate(end.getDate() - n); return x.toISOString(); };
+  const mk = (rank, category, region, title, description, days) => ({
+    id:'sample-' + rank, rank, category, region, title, description,
+    summary: description + ' This is a sample story that shows how the weekly news slider will look. Real stories appear here automatically after the news agent\'s first Sunday run.',
+    source_name:'VaanAI sample', source_url:'', published_at:d(days), image_url:'', image_credit:'Illustration: VaanAI',
+    week_start:d(7).slice(0,10), week_end:d(1).slice(0,10), sample:true });
+  return [
+    mk(1,'weather & disasters','South Asia','Sample: late monsoon floods spread across river plains','Satellite radar shows standing water across low-lying farmland after a week of heavy rain.',2),
+    mk(2,'forests','Amazon basin','Sample: forest clearing slows along a major highway','New imagery suggests fewer fresh clearings than the same month last year.',3),
+    mk(3,'ice & polar','Arctic','Sample: Arctic sea ice reaches its seasonal minimum','The summer low is among the smallest in the satellite record.',4),
+    mk(4,'water','Southern Africa','Sample: reservoir levels fall ahead of the dry season','Several large dams are below half capacity as rains arrive late.',5),
+    mk(5,'oceans','Pacific','Sample: marine heatwave bleaches coral reefs','Sea-surface temperatures stayed well above normal for a third straight week.',6)
+  ];
+})();
+
+const news = { items: [], idx: 0, timer: null, paused: false };
+
+async function loadNews(){
+  if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+    try {
+      const res = await fetch(`${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/latest_top_news?select=*&order=rank.asc`,
+        { headers: { apikey: SUPABASE_ANON_KEY, Authorization: `Bearer ${SUPABASE_ANON_KEY}` } });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const rows = await res.json();
+      if (Array.isArray(rows) && rows.length) { news.items = rows.slice(0, 5); return; }
+    } catch (err) { console.warn('[VaanAI] Could not load weekly news, showing samples instead:', err); }
+  }
+  news.items = SAMPLE_NEWS;
+}
+
+function newsThumb(n){
+  const [ic] = newsCat(n.category), img = safeUrl(n.image_url);
+  return `<div class="thumb">${img
+      ? `<img src="${esc(img)}" alt="" loading="lazy" decoding="async">`
+      : `<canvas data-news-pic="${esc(n.id)}" aria-hidden="true"></canvas>`}
+    <span class="chip">${icon(ic)}${esc(capFirst(n.category || 'Environment'))}</span>
+    <span class="rank" aria-label="Rank ${n.rank}">${n.rank}</span>
+    ${n.image_credit ? `<span class="credit">${esc(n.image_credit)}</span>` : ''}</div>`;
+}
+
+function renderNews(){
+  const items = news.items, first = items[0];
+  const sample = !!(first && first.sample);
+  $('#newsPill').hidden = !sample;
+  if (first) {
+    const ws = fmtDate(first.week_start, {day:'numeric', month:'short'}), we = fmtDate(first.week_end);
+    $('#weekRange').textContent = `This week on Earth · ${ws} – ${we}`;
+  }
+  if (!items.length) { $('#news').innerHTML = `<li class="news-empty">This week's news will appear here after Sunday's update.</li>`; return; }
+  $('#news').innerHTML = items.map((n, i) => `
+    <li class="slide" aria-roledescription="slide" aria-label="${i + 1} of ${items.length}">
+      <button class="news-card" data-news="${esc(n.id)}" type="button">
+        ${newsThumb(n)}
+        <div class="body">
+          <span class="when">${esc([n.source_name, fmtTS(n.published_at), n.region].filter(Boolean).join(' · '))}</span>
+          <h3>${esc(n.title)}</h3>
+          <p>${esc(n.description)}</p>
+          <span class="more">Read more<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+        </div>
+      </button>
+    </li>`).join('');
+  $('#newsDots').innerHTML = items.map((n, i) => `<button type="button" aria-label="Story ${i + 1}: ${esc(n.title)}" data-dot="${i}"></button>`).join('');
+  // Sample stories get a procedural picture; real stories use the saved image.
+  $('#news').querySelectorAll('canvas[data-news-pic]').forEach(cv => {
+    const n = items.find(x => String(x.id) === cv.dataset.newsPic);
+    paint(cv, newsCat(n.category)[1], hashStr(String(n.id)), .5, 240, 150);
+  });
+  // A broken image link falls back to the picture style instead of an empty box.
+  $('#news').querySelectorAll('.thumb img').forEach(img => img.addEventListener('error', () => {
+    const cv = document.createElement('canvas'), n = items.find(x => x.id == img.closest('[data-news]').dataset.news);
+    paint(cv, newsCat(n.category)[1], hashStr(String(n.id)), .5, 240, 150); img.replaceWith(cv);
+  }, { once: true }));
+  syncNewsUI();
+}
+
+/* slider mechanics: native scroll-snap + arrows, dots and gentle autoplay */
+const track = () => $('#news');
+function slideTo(i, smooth = true){
+  const slides = track().children; if (!slides.length) return;
+  news.idx = (i + slides.length) % slides.length;
+  const left = slides[news.idx].offsetLeft - track().offsetLeft - 2;
+  track().scrollTo({ left: Math.min(left, track().scrollWidth - track().clientWidth), behavior: smooth ? 'smooth' : 'auto' });
+}
+function currentSlide(){
+  const t = track(), slides = [...t.children]; if (!slides.length) return 0;
+  if (t.scrollLeft + t.clientWidth >= t.scrollWidth - 4) return slides.length - 1;
+  let best = 0, dist = Infinity;
+  slides.forEach((el, i) => { const d = Math.abs(el.offsetLeft - t.offsetLeft - t.scrollLeft); if (d < dist) { dist = d; best = i; } });
+  return best;
+}
+function syncNewsUI(){
+  news.idx = currentSlide();
+  const t = track(), atStart = t.scrollLeft < 4, atEnd = t.scrollLeft + t.clientWidth >= t.scrollWidth - 4;
+  $('#newsPrev').disabled = atStart; $('#newsNext').disabled = atStart && atEnd;
+  $('#newsDots').querySelectorAll('button').forEach((b, i) => b.setAttribute('aria-current', i === news.idx ? 'true' : 'false'));
+}
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
+function startAutoplay(){
+  stopAutoplay();
+  if (reduceMotion.matches || news.items.length < 2) return;
+  news.timer = setInterval(() => {
+    if (news.paused || document.hidden || dlg.open) return;
+    const t = track(), atEnd = t.scrollLeft + t.clientWidth >= t.scrollWidth - 4;
+    slideTo(atEnd ? 0 : currentSlide() + 1);
+  }, NEWS_AUTOPLAY_MS);
+}
+function stopAutoplay(){ clearInterval(news.timer); news.timer = null; }
+
+function openNews(id){
+  const n = news.items.find(x => String(x.id) === String(id)); if (!n) return;
+  const [ic, pic] = newsCat(n.category), img = safeUrl(n.image_url), src = safeUrl(n.source_url);
+  const url = `${SITE_URL}#news-${n.id}`, text = `${n.title} · via VaanAI`;
+  dlg.innerHTML = `
+    <div class="d-head">
+      <div><span class="chip">${icon(ic)}${esc(capFirst(n.category || 'Environment'))}</span>
+        <h2 id="dTitle">${esc(n.title)}</h2>
+        <div class="where">${esc([n.region, n.source_name, fmtTS(n.published_at)].filter(Boolean).join(' · '))}</div></div>
+      <button class="close" id="dClose" type="button" aria-label="Close"><svg width="16" height="16" viewBox="0 0 16 16" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 3l10 10M13 3L3 13"/></svg></button>
+    </div>
+    <div class="d-body">
+      <figure class="news-figure">${img ? `<img src="${esc(img)}" alt="">` : `<canvas id="newsPic" aria-hidden="true"></canvas>`}
+        ${n.image_credit ? `<figcaption>${esc(n.image_credit)}</figcaption>` : ''}</figure>
+      <p class="summary">${esc(n.summary || n.description)}</p>
+      <ul class="meta-list">
+        <li><b>Source</b> ${esc(n.source_name || '')}</li>
+        ${n.published_at ? `<li><b>Published</b> ${fmtTS(n.published_at)}</li>` : ''}
+        ${n.region ? `<li><b>Region</b> ${esc(n.region)}</li>` : ''}
+        <li><b>Week</b> ${fmtDate(n.week_start, {day:'numeric', month:'short'})} – ${fmtDate(n.week_end)}</li>
+      </ul>
+      ${src ? `<div><a class="sbtn primary" href="${esc(src)}" target="_blank" rel="noopener">Read the full story on ${esc(n.source_name)}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg></a></div>` : ''}
+      <div class="share">
+        <span>Share this story</span>
+        <a class="sbtn" target="_blank" rel="noopener" href="https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}">${SHARE_ICONS.fb}Facebook</a>
+        <a class="sbtn" target="_blank" rel="noopener" href="https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${encodeURIComponent(url)}">${SHARE_ICONS.x}X</a>
+        <a class="sbtn" target="_blank" rel="noopener" id="igBtn" href="https://www.instagram.com/">${SHARE_ICONS.ig}Instagram</a>
+        <button class="sbtn" id="copyBtn" type="button">${SHARE_ICONS.link}Copy link</button>
       </div>
-    </button>`).join('');
+      <p class="note">${n.sample ? 'This is a sample story. ' : ''}Summary written by VaanAI's news agent from the original article. The article and image belong to ${esc(n.source_name || 'the publisher')}.</p>
+    </div>`;
+  if (!img) paint($('#newsPic'), pic, hashStr(String(n.id)), .5, 320, 180);
+  $('#dClose').addEventListener('click', closeDetail);
+  $('#copyBtn').addEventListener('click', () => copy(url, 'Link copied'));
+  $('#igBtn').addEventListener('click', () => copy(`${text}\n${url}`, 'Caption copied. Paste it into your Instagram post or story.'));
+  if (!dlg.open) dlg.showModal();
+  try { history.replaceState(null, '', '#news-' + n.id); } catch {}
 }
 
 /* ---------- Filters ---------- */
@@ -637,7 +828,18 @@ let toastTimer;
 function toast(msg){ const el = $('#toast'); el.textContent = msg; el.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 2800); }
 
 /* ---------- Wiring ---------- */
-document.addEventListener('click', e => { const b = e.target.closest('[data-open]'); if (b) openDetail(b.dataset.open); });
+document.addEventListener('click', e => {
+  const n = e.target.closest('[data-news]'); if (n) { openNews(n.dataset.news); return; }
+  const b = e.target.closest('[data-open]'); if (b) openDetail(b.dataset.open);
+});
+$('#newsPrev').addEventListener('click', () => { slideTo(currentSlide() - 1); startAutoplay(); });
+$('#newsNext').addEventListener('click', () => { slideTo(currentSlide() + 1); startAutoplay(); });
+$('#newsDots').addEventListener('click', e => { const d = e.target.closest('[data-dot]'); if (d) { slideTo(+d.dataset.dot); startAutoplay(); } });
+let scrollRaf; $('#news').addEventListener('scroll', () => { cancelAnimationFrame(scrollRaf); scrollRaf = requestAnimationFrame(syncNewsUI); }, { passive: true });
+const slider = $('#newsSlider');
+['mouseenter', 'focusin', 'touchstart'].forEach(ev => slider.addEventListener(ev, () => { news.paused = true; }, { passive: true }));
+['mouseleave', 'focusout'].forEach(ev => slider.addEventListener(ev, () => { news.paused = false; }));
+window.addEventListener('resize', syncNewsUI);
 $('#fnList').addEventListener('change', e => {
   if (!e.target.matches('input[type=checkbox]')) return;
   e.target.checked ? state.cats.add(e.target.value) : state.cats.delete(e.target.value);
@@ -653,9 +855,13 @@ $('#districtSel').addEventListener('change', e => {
 });
 $('#homeLink').addEventListener('click', e => { e.preventDefault(); if (dlg.open) closeDetail(); window.scrollTo({top: 0, behavior: 'smooth'}); });
 
-renderWeek(); paintAll($('#news'));
+renderWeek();
 renderFns(); renderLocality(); renderResults();
 const m = location.hash.match(/^#insight-([\w.~-]+)$/); if (m) openDetail(m[1]);
+loadNews().then(() => {
+  renderNews(); startAutoplay();
+  const nm = location.hash.match(/^#news-([\w.~-]+)$/); if (nm) openNews(nm[1]);
+});
 </script>
 
 </body>
