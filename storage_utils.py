@@ -18,6 +18,7 @@ website can actually display:
 
 import logging
 import os
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -101,16 +102,53 @@ def get_supabase_client():
     return create_client(url, key)
 
 
+RETRY_WAITS = (5, 15, 30)   # seconds to wait before attempts 2, 3 and 4
+
+
+def short_error(exc: Exception, limit: int = 300) -> str:
+    """One-line version of an error. Supabase/Cloudflare outages come back as a
+    whole HTML error page, which otherwise floods the log with hundreds of lines."""
+    text = " ".join(str(exc).split())
+    if "<!DOCTYPE" in text or "<html" in text:
+        title = text.split("<title>")[1].split("</title>")[0] if "<title>" in text else "HTML error page"
+        status = text.split("'statusCode':")[1].split(",")[0].strip() if "'statusCode':" in text else "?"
+        return f"HTTP {status} from Supabase: {title}"
+    return text[:limit] + ("…" if len(text) > limit else "")
+
+
+def _with_retries(action: str, func):
+    """Runs func(), retrying on failure. Supabase occasionally returns a
+    temporary 5xx (e.g. Cloudflare 520) or drops the connection; a short wait and
+    retry almost always succeeds, so one hiccup shouldn't throw away a finished
+    multi-minute analysis. Re-raises the last error if every attempt fails."""
+    for attempt in range(len(RETRY_WAITS) + 1):
+        try:
+            return func()
+        except Exception as exc:  # noqa: BLE001
+            if attempt == len(RETRY_WAITS):
+                raise RuntimeError(f"{action} failed after {attempt + 1} attempts: {short_error(exc)}") from None
+            wait = RETRY_WAITS[attempt]
+            log.warning("%s failed (attempt %d/%d): %s — retrying in %ds.",
+                        action, attempt + 1, len(RETRY_WAITS) + 1, short_error(exc), wait)
+            time.sleep(wait)
+
+
 def upload_image(local_path: str) -> str:
     """Uploads a local PNG to the Supabase Storage bucket and returns its
     public URL. Assumes the bucket is set to Public (see setup instructions)."""
     client = get_supabase_client()
     remote_name = f"{uuid.uuid4().hex}.png"
 
-    with open(local_path, "rb") as f:
-        client.storage.from_(BUCKET_NAME).upload(
-            remote_name, f, {"content-type": "image/png"}
-        )
+    def _upload():
+        with open(local_path, "rb") as f:
+            # upsert: if an attempt actually reached Supabase before the error
+            # came back, the retry overwrites that file instead of failing
+            # with "already exists".
+            client.storage.from_(BUCKET_NAME).upload(
+                remote_name, f, {"content-type": "image/png", "upsert": "true"}
+            )
+
+    _with_retries(f"Uploading {os.path.basename(local_path)}", _upload)
 
     public_url = client.storage.from_(BUCKET_NAME).get_public_url(remote_name)
     log.info("Uploaded %s -> %s", local_path, public_url)
@@ -142,28 +180,30 @@ def save_insight(record: dict) -> None:
     row = {**record, "modified_at": now.isoformat()}
     row.pop("created_at", None)   # never overwrite the original creation time
 
-    todays_rows = (
-        table.select("*")
-        .eq("location", record["location"])
-        .gte("created_at", day_start.isoformat())
-        .lt("created_at", day_end.isoformat())
-        .order("created_at", desc=True)
-        .execute()
-        .data
-    )
+    def _write():
+        # The look-up runs again on every retry, so if an earlier attempt's
+        # insert did reach the database, the retry updates that row instead of
+        # adding a duplicate.
+        todays_rows = (
+            table.select("*")
+            .eq("location", record["location"])
+            .gte("created_at", day_start.isoformat())
+            .lt("created_at", day_end.isoformat())
+            .order("created_at", desc=True)
+            .execute()
+            .data
+        )
+        if todays_rows:
+            existing = todays_rows[0]
+            query = table.update(row)
+            if "id" in existing:
+                query = query.eq("id", existing["id"])
+            else:   # no id column — fall back to matching the exact created_at
+                query = query.eq("location", record["location"]).eq("created_at", existing["created_at"])
+            return query.execute(), "Updated today's existing"
+        return table.insert(row).execute(), "Inserted NEW"
 
-    if todays_rows:
-        existing = todays_rows[0]
-        query = table.update(row)
-        if "id" in existing:
-            query = query.eq("id", existing["id"])
-        else:   # no id column — fall back to matching the exact created_at
-            query = query.eq("location", record["location"]).eq("created_at", existing["created_at"])
-        response = query.execute()
-        action = "Updated today's existing"
-    else:
-        response = table.insert(row).execute()
-        action = "Inserted NEW"
+    response, action = _with_retries("Saving insight row", _write)
 
     if not response.data:
         # Supabase can "succeed" while writing nothing (e.g. a row-level-security
