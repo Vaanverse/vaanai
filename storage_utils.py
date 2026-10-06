@@ -19,6 +19,7 @@ website can actually display:
 import logging
 import os
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import rasterio
@@ -117,13 +118,60 @@ def upload_image(local_path: str) -> str:
 
 
 def save_insight(record: dict) -> None:
-    """Inserts one row into the `water_insights` table. `record` keys should match
-    the table's columns (location, before_date, after_date, before_value,
-    after_value, change_pct, summary, confidence, before_image_url,
-    after_image_url) — see the SQL in the build plan for the exact schema."""
+    """Saves one result to the `water_insights` table — ONE ROW PER LOCATION PER DAY.
+
+    - First run of the day for a location  -> INSERT a new row (created_at is
+      filled in by the database default; modified_at is set here).
+    - Another run on the SAME created_at date (UTC) -> UPDATE that day's row
+      in place and bump modified_at. created_at is left untouched.
+
+    So every weekly run adds a new row, even when the agent picks the same
+    two scene dates as last week (no new clear scene yet). The day is the UTC
+    day, matching how Supabase stores created_at (the schedule runs 06:00 UTC).
+
+    Requires the `modified_at` column, and the old UNIQUE constraint on
+    (location, before_date, after_date) to be dropped — see the SQL in
+    sql/2026-10-06_modified_at.sql. Otherwise the insert for a repeated scene
+    pair would be rejected as a duplicate."""
     client = get_supabase_client()
-    # upsert (not insert) so re-running the same location/date-pair comparison
-    # updates the existing row instead of creating a duplicate. Requires the
-    # unique constraint on (location, before_date, after_date) — see build notes.
-    client.table("water_insights").upsert(record, on_conflict="location,before_date,after_date").execute()
-    log.info("Saved insight to database: %s", record.get("location"))
+    table = client.table("water_insights")
+
+    now = datetime.now(timezone.utc)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timedelta(days=1)
+    row = {**record, "modified_at": now.isoformat()}
+    row.pop("created_at", None)   # never overwrite the original creation time
+
+    todays_rows = (
+        table.select("*")
+        .eq("location", record["location"])
+        .gte("created_at", day_start.isoformat())
+        .lt("created_at", day_end.isoformat())
+        .order("created_at", desc=True)
+        .execute()
+        .data
+    )
+
+    if todays_rows:
+        existing = todays_rows[0]
+        query = table.update(row)
+        if "id" in existing:
+            query = query.eq("id", existing["id"])
+        else:   # no id column — fall back to matching the exact created_at
+            query = query.eq("location", record["location"]).eq("created_at", existing["created_at"])
+        response = query.execute()
+        action = "Updated today's existing"
+    else:
+        response = table.insert(row).execute()
+        action = "Inserted NEW"
+
+    if not response.data:
+        # Supabase can "succeed" while writing nothing (e.g. a row-level-security
+        # policy blocks it). Fail loudly so the run goes red instead of green.
+        raise RuntimeError("Supabase returned no rows — nothing was written "
+                           "(check the SUPABASE_KEY is the service_role key, or the table's RLS policies).")
+
+    saved = response.data[0]
+    log.info("%s insight row (id=%s, created_at=%s) for %s: %s -> %s.",
+             action, saved.get("id", "n/a"), saved.get("created_at"), record["location"],
+             record["before_date"], record["after_date"])

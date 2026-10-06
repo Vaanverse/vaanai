@@ -484,6 +484,24 @@ def _handle_finalize(tool_args: dict, location: str) -> None:
         log.error("Failed to persist insight to Supabase: %s", exc)
         print(f"(Warning: could not save to Supabase — {exc})")
 
+def _compute_missing(folder_dates: dict, computed: dict, rejected: set) -> None:
+    """The model sometimes fetches a scene and then stops (or writes its report)
+    without ever calling compute_water_extent on it — e.g. Lake Powell, where it
+    fetched the 2023 scene, never measured it, and simply copied the 2024 value
+    as the 'before' number. The download is already done, so measure any such
+    folder ourselves instead of throwing the run away."""
+    for folder in folder_dates:
+        if folder in computed:
+            continue
+        log.warning("Scene %s was fetched but never measured — measuring it now.", folder)
+        result = tool_compute_water_extent({"folder": folder})
+        log.info("Tool result: %s", result)
+        if "water_area_km2" in result:
+            computed[folder] = result["water_area_km2"]
+            if "warning" in result:
+                rejected.add(folder)
+
+
 def _extract_report_from_text(text: str, computed: dict):
     """If the model wrote its finalize_report arguments as text instead of a tool
     call, recover them — but only if the folders really were computed, and use
@@ -499,6 +517,20 @@ def _extract_report_from_text(text: str, computed: dict):
     if not required.issubset(data) or data["before_folder"] not in computed \
             or data["after_folder"] not in computed:
         return None
+    # If the numbers the model typed don't match what was really measured, its
+    # summary was written about made-up values — don't publish that text.
+    # Returning None hands over to _force_finalize, which shows the model the
+    # real measurements and asks it to write the report again.
+    for side in ("before", "after"):
+        real = computed[data[f"{side}_folder"]]
+        try:
+            typed = float(data[f"{side}_value"])
+        except (TypeError, ValueError):
+            return None
+        if abs(typed - real) > max(0.01 * abs(real), 0.01):
+            log.warning("Model's text report says %s_value=%s but the measured value is %s — "
+                        "not using its summary.", side, typed, real)
+            return None
     data["before_value"] = computed[data["before_folder"]]
     data["after_value"] = computed[data["after_folder"]]
     return data
@@ -625,6 +657,7 @@ def run_agent(goal: str, api_key: str, location: str) -> None:
         tool_calls = message.get("tool_calls") or []
 
         if not tool_calls:
+            _compute_missing(folder_dates, computed, rejected)
             recovered = _extract_report_from_text(message.get("content"), computed)
             if recovered:
                 log.warning("Model wrote its report as text — using its own chosen scenes.")
@@ -680,6 +713,7 @@ def run_agent(goal: str, api_key: str, location: str) -> None:
         if stop:
             return
 
+    _compute_missing(folder_dates, computed, rejected)
     if _force_finalize(messages, api_key, computed, folder_dates, location, rejected):
         return
     log.warning("Hit MAX_TURNS (%d) without a final report. Ending.", MAX_TURNS)
