@@ -34,3 +34,20 @@ python agentic_water_monitor_groq.py `
 
 
 The 6th Mile Dam water surface grew from about 0.015 km² in early October 2023 to roughly 0.272 km² in mid‑September 2024, an increase of ~0.26 km². This substantial rise is most likely driven by higher monsoon precipitation in 2024, filling the reservoir compared to the drier conditions of the previous year.
+
+
+now let us focus on building a comprehensive website. 
+
+refer these  website for reference https://eodashboard.org/ and  https://earth.esa.int/eogateway/catalog. let us build a similar website. ofcourse not the same. I want blue and white colours to be the predominant colours.
+1. Give a header named VaanAI - as a clickable object the left top corner. we can add other menus later
+2. in the top center, lets us add the below
+VaanAI: Sky-high vision, ground-level truth. ----- in bold
+AI-powered satellite insights, delivered to your desk.
+3. in the home screen let us try to give some general information. this will show some key news on the earth level changes for the weerk
+4. our different function like Water Monitor, Vegetation, Forest Fires, Constructions, Floods, Polar changes as checkboxes will be option to choose for viewers to view
+5. we should show only the latest insight for a particular sight. we can have option in the website to allow the pick an earlier record if available
+6. once the user selects a function, he could select his locality and see insights of places arounnd that district. all those should be displayed as a rectangular curve edged tiles with a title below. clicking on that should open the full details. 
+7, add the credits for thoird party in the bottom as usual
+8. allow users to share this news in their facebook, instagram, X
+9. give a movement graphic if th user hovers over a tile
+10. make this user friendly and pleasant
