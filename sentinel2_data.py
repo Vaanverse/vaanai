@@ -30,9 +30,12 @@ Reflectance is stored like HLS (reflectance x 10000, -9999 = no data), so
 compute_water_change.py and storage_utils.py work on these folders as-is.
 """
 
+from __future__ import annotations
+
 import logging
 import math
 import os
+from datetime import datetime
 
 import numpy as np
 import rasterio
@@ -233,11 +236,19 @@ def aoi_quality(items: list[dict], bbox) -> tuple[float, float]:
     return float(bad.mean()), float(covered.mean())
 
 
-def best_scene(bbox, start_date: str, end_date: str, max_candidates: int = 6):
-    """Finds the clearest day over the bbox. Groups scenes by acquisition day
-    (a bbox can straddle two tiles), keeps the days that cover the bbox, checks
-    up to `max_candidates` of the least cloudy ones over the bbox itself, and
-    returns (day, items, bad_fraction, coverage_fraction) — or None."""
+CLEAR_ENOUGH = 0.10   # with a target date: first day this clear (<10% cloudy over the bbox) wins
+
+
+def best_scene(bbox, start_date: str, end_date: str, max_candidates: int = 6, target_date: str | None = None):
+    """Finds the best day over the bbox. Groups scenes by acquisition day
+    (a bbox can straddle two tiles), keeps the days that cover the bbox, then
+    checks up to `max_candidates` days over the bbox itself and returns
+    (day, items, bad_fraction, coverage_fraction) — or None.
+
+    - Without target_date: checks the least cloudy days first; the clearest wins.
+    - With target_date (YYYY-MM-DD): checks the days CLOSEST to that date first;
+      the first one that is clear enough (CLEAR_ENOUGH) wins. If none is, the
+      clearest one checked is returned."""
     items = search_items(bbox, start_date, end_date)
     by_day: dict = {}
     for it in items:
@@ -247,7 +258,14 @@ def best_scene(bbox, start_date: str, end_date: str, max_candidates: int = 6):
         return min(1.0, sum(item_overlap(i, bbox) for i in its))
 
     days = [d for d in by_day if cover(by_day[d]) >= 0.95] or list(by_day)
-    days.sort(key=lambda d: max(item_cloud(i) for i in by_day[d]))
+    if target_date:
+        target = datetime.strptime(target_date, "%Y-%m-%d").date()
+        days.sort(key=lambda d: (abs((datetime.strptime(d, "%Y-%m-%d").date() - target).days),
+                                 max(item_cloud(i) for i in by_day[d])))
+        good_enough = CLEAR_ENOUGH
+    else:
+        days.sort(key=lambda d: max(item_cloud(i) for i in by_day[d]))
+        good_enough = 0.02   # essentially clear — no need to check more days
 
     best = None
     for day in days[:max_candidates]:
@@ -259,8 +277,8 @@ def best_scene(bbox, start_date: str, end_date: str, max_candidates: int = 6):
         log.info("Sentinel-2 %s: %.0f%% cloudy/missing over the area.", day, bad * 100)
         if best is None or bad < best[2]:
             best = (day, by_day[day], bad, covered)
-        if bad < 0.02:
-            break   # essentially clear — no need to check more days
+        if bad < good_enough:
+            break
     return best
 
 
