@@ -253,3 +253,23 @@ def save_insight(record: dict) -> None:
     log.info("%s insight row (id=%s, created_at=%s) for %s: %s -> %s.",
              action, saved.get("id", "n/a"), saved.get("created_at"), record["location"],
              record["before_date"], record["after_date"])
+
+
+def mark_location_run(location_id: int) -> None:
+    """Sets last_run_at = now (UTC) on one row of `monitored_locations_water`,
+    so the table shows when each location was last analysed. Called by the
+    water agent at the end of every run, successful or not."""
+    client = get_supabase_client()
+    now = datetime.now(timezone.utc).isoformat()
+
+    def _write():
+        return (client.table("monitored_locations_water")
+                .update({"last_run_at": now})
+                .eq("id", location_id)
+                .execute())
+
+    response = with_retries("Updating last_run_at", _write)
+    if not response.data:
+        raise RuntimeError(f"No row with id={location_id} in monitored_locations_water was updated "
+                           "(wrong id, or SUPABASE_KEY is not the service_role key).")
+    log.info("Set last_run_at=%s for location id %s.", now, location_id)

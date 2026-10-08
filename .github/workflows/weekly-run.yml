@@ -1,46 +1,78 @@
-name: Weekly VaanAI Insight Run
+name: Monthly VaanAI Water Insight Run
+
+# The list of places to analyse lives in the Supabase table
+# `monitored_locations_water` (only rows with active = true are run).
+# Add, remove or pause a location there — no change to this file needed.
 
 on:
   schedule:
-    - cron: '0 6 * * 1'   # every Monday, 6:00 AM UTC
+    - cron: '0 6 1 * *'     # 1st day of every month, 06:00 UTC (11:30 AM IST)
   workflow_dispatch:        # lets you trigger it manually from the Actions tab too
 
 jobs:
-  run-agent:
+  # Job 1: read the active locations from Supabase and turn them into a job list.
+  plan:
     # Only ever run on main. Scheduled runs already use main (the default
     # branch); this also blocks manual "Run workflow" clicks from dev or any
     # other branch — those runs are skipped instead of writing to Supabase.
     if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    outputs:
+      locations: ${{ steps.list.outputs.locations }}
+      count: ${{ steps.list.outputs.count }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - run: pip install "supabase>=2.0.0" "python-dotenv>=1.0.0"   # only what the list script needs
+      - name: Read active locations from monitored_locations_water
+        id: list
+        run: python list_monitored_locations.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+
+  # Job 2: run the agent once per location.
+  run-agent:
+    needs: plan
+    if: needs.plan.outputs.count != '0'   # nothing active -> nothing to run
     # Pinned (not ubuntu-latest) so GitHub's switch of "latest" to Ubuntu 26
     # on 19 Oct 2026 can't change the environment under us unannounced.
     runs-on: ubuntu-24.04
+    timeout-minutes: 60     # one stuck location can't block the queue for 6 hours
     strategy:
       fail-fast: false      # one location failing shouldn't cancel the others
       max-parallel: 1       # run locations one after another, so they don't share Groq's
                             # free-tier rate limit at the same moment
       matrix:
-        location:
-          - name: "Lake Mead, NV/AZ"
-            bbox: "-114.75 36.00 -114.30 36.25"
-          - name: "Lake Powell, UT/AZ"      # central lake: San Juan + Escalante arms, Bullfrog Bay
-            bbox: "-111.25 37.00 -110.75 37.50"
-          # Add more locations here, same shape:
-          # - name: "Lake Name, Region"
-          #   bbox: "MIN_LON MIN_LAT MAX_LON MAX_LAT"
+        location: ${{ fromJSON(needs.plan.outputs.locations) }}
+    name: "#${{ matrix.location.id }} ${{ matrix.location.name }}"
     steps:
       - uses: actions/checkout@v5        # v5+ runs on Node 24 (v4 used deprecated Node 20)
       - uses: actions/setup-python@v6    # v6+ runs on Node 24 (v5 used deprecated Node 20)
         with:
           python-version: '3.11'
+          cache: 'pip'                   # reuse downloaded packages across the many jobs
       - run: pip install -r requirements.txt
       - name: Run agent for ${{ matrix.location.name }}
+        # Values from the table are passed through environment variables (not
+        # pasted into the command) so a quote or symbol in a name can't break the shell.
         run: |
           python agentic_water_monitor_groq.py \
-            --location "${{ matrix.location.name }}" \
-            --bbox ${{ matrix.location.bbox }} \
+            --location "$LOC_NAME" \
+            --location-id "$LOC_ID" \
+            --bbox $LOC_BBOX \
+            --source "$LOC_SENSOR" \
+            --media-needed "$LOC_MEDIA" \
             --goal "Compare the most recently available clear scene to a scene from roughly one year earlier for this location. Avoid cloudy or snow-covered scenes. Decide if the change is significant and explain a likely driver." \
             --model "openai/gpt-oss-120b"
         env:
+          LOC_NAME: ${{ matrix.location.name }}
+          LOC_ID: ${{ matrix.location.id }}
+          LOC_BBOX: ${{ matrix.location.bbox }}
+          LOC_SENSOR: ${{ matrix.location.sensor }}
+          LOC_MEDIA: ${{ matrix.location.media_needed }}
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}

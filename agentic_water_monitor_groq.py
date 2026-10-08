@@ -49,6 +49,7 @@ log = logging.getLogger(__name__)
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 MODEL = "openai/gpt-oss-20b"  # confirmed available on this account; use --model to try openai/gpt-oss-120b for higher quality
 AOI_BBOX = None
+MEDIA_NEEDED = True  # set in main() from --media-needed; False = save the numbers only, no before/after images
 
 # Data source: NASA HLS (30 m) for large areas, Sentinel-2 L2A (10 m) for small
 # ones such as village reservoirs. "auto" decides from the bbox size.
@@ -421,25 +422,30 @@ def call_groq(messages: list, api_key: str, max_retries: int = 3, tool_choice="a
 
 
 def persist_result(final_args: dict, location: str) -> None:
-    """Generates before/after preview images, uploads them to Supabase Storage,
-    and inserts one row into the `insights` table — called once finalize_report
-    is invoked. Keeps the model's own reported values as the source of truth
-    for what to save, since it's the one that knows which folders/dates it used."""
+    """Saves one row into the `water_insights` table — called once finalize_report
+    is invoked. If MEDIA_NEEDED, also generates before/after preview images and
+    uploads them to Supabase Storage; otherwise the image URL columns stay empty.
+    Keeps the model's own reported values as the source of truth for what to
+    save, since it's the one that knows which folders/dates it used."""
     import tempfile as _tempfile
 
-    before_dir = _tempfile.mkdtemp(prefix="vaanai_preview_")
-    after_dir = _tempfile.mkdtemp(prefix="vaanai_preview_")
-    _created_folders.extend([before_dir, after_dir])
-    # JPEG, not PNG: a lossless PNG of a large area can exceed 20 MB (see
-    # storage_utils.generate_preview_png); JPEG keeps previews around 1 MB.
-    before_png = os.path.join(before_dir, "before.jpg")
-    after_png = os.path.join(after_dir, "after.jpg")
+    before_url = after_url = None
+    if MEDIA_NEEDED:
+        before_dir = _tempfile.mkdtemp(prefix="vaanai_preview_")
+        after_dir = _tempfile.mkdtemp(prefix="vaanai_preview_")
+        _created_folders.extend([before_dir, after_dir])
+        # JPEG, not PNG: a lossless PNG of a large area can exceed 20 MB (see
+        # storage_utils.generate_preview_png); JPEG keeps previews around 1 MB.
+        before_png = os.path.join(before_dir, "before.jpg")
+        after_png = os.path.join(after_dir, "after.jpg")
 
-    storage.generate_preview_png(final_args["before_folder"], before_png, bbox=AOI_BBOX)
-    storage.generate_preview_png(final_args["after_folder"], after_png, bbox=AOI_BBOX)
+        storage.generate_preview_png(final_args["before_folder"], before_png, bbox=AOI_BBOX)
+        storage.generate_preview_png(final_args["after_folder"], after_png, bbox=AOI_BBOX)
 
-    before_url = storage.upload_image(before_png)
-    after_url = storage.upload_image(after_png)
+        before_url = storage.upload_image(before_png)
+        after_url = storage.upload_image(after_png)
+    else:
+        log.info("media_needed = false for %s — saving the numbers only, no images.", location)
 
     before_value = final_args["before_value"]
     after_value = final_args["after_value"]
@@ -481,7 +487,7 @@ def _handle_finalize(tool_args: dict, location: str) -> None:
     try:
         persist_result(tool_args, location=location)
         _insight_saved = True
-        print("(Saved image pair + result to Supabase.)")
+        print("(Saved image pair + result to Supabase.)" if MEDIA_NEEDED else "(Saved result to Supabase - no images, media_needed = false.)")
     except Exception as exc:  # noqa: BLE001 - don't let a save failure hide the report itself
         msg = storage.short_error(exc)   # one line, not a whole Cloudflare HTML page
         log.error("Failed to persist insight to Supabase: %s", msg)
@@ -736,6 +742,14 @@ def parse_args() -> argparse.Namespace:
         help=f"Satellite data: 'hls' = NASA HLS 30 m, 's2' = Sentinel-2 10 m, "
              f"'auto' (default) = Sentinel-2 if the bbox is under {SMALL_AOI_KM2} km², else HLS.",
     )
+    parser.add_argument(
+        "--media-needed", choices=["true", "false"], default="true", type=str.lower,
+        help="'true' (default) = also save before/after preview images; 'false' = save the numbers only.",
+    )
+    parser.add_argument(
+        "--location-id", type=int, default=None,
+        help="id of the row in monitored_locations_water; when given, its last_run_at is updated after the run.",
+    )
     return parser.parse_args()
 
 
@@ -746,7 +760,7 @@ def bbox_area_km2(bbox) -> float:
 
 
 def main() -> None:
-    global MODEL, AOI_BBOX, DATA_SOURCE, DATA_RES
+    global MODEL, AOI_BBOX, DATA_SOURCE, DATA_RES, MEDIA_NEEDED
     load_dotenv()
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -756,6 +770,7 @@ def main() -> None:
     args = parse_args()
     MODEL = args.model
     AOI_BBOX = tuple(args.bbox)
+    MEDIA_NEEDED = args.media_needed == "true"
 
     area = bbox_area_km2(AOI_BBOX)
     DATA_SOURCE = args.source if args.source != "auto" else ("s2" if area < SMALL_AOI_KM2 else "hls")
@@ -779,6 +794,14 @@ def main() -> None:
         run_agent(goal_prompt, api_key, location=args.location)
     finally:
         cleanup_temp_folders()
+        if args.location_id is not None:
+            # Record that this location was attempted, whether or not it succeeded.
+            # A failure here only logs a warning — it must not hide the real result.
+            try:
+                storage.mark_location_run(args.location_id)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Could not update last_run_at for location id %s: %s",
+                            args.location_id, storage.short_error(exc))
 
     # A run that finishes without saving a result is a failure, even if nothing
     # crashed (e.g. hit MAX_TURNS, a tool code error, or Supabase rejected the
