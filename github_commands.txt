@@ -10,7 +10,7 @@ git checkout dev
 
 
 git add .
-git commit -m "image size"
+git commit -m "index and display using the id key"
 git push -u origin dev      # the -u is only needed the very first push; just `git push` after that
 
 optional
