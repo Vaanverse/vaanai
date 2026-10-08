@@ -10,12 +10,16 @@
 <style>
 /* Layout: sticky three-column header (logo | tagline | future menus) → weekly highlights band → filter panel → tile grid → credits footer */
 :root{
-  --bg:#f5f9ff; --surface:#ffffff; --ink:#0b2545; --muted:#4f6688; --line:#d8e3f2;
-  --blue:#1456d6; --blue-ink:#ffffff; --blue-deep:#0a2f6b; --blue-soft:#e7effd; --sky:#7fb6ff;
+  --bg:#e6f0ff; --surface:#ffffff; --ink:#0b2545; --muted:#46618a; --line:#cbdaf2;
+  --blue:#1456d6; --blue-ink:#ffffff; --blue-deep:#0a2f6b; --blue-soft:#dce8fd; --sky:#7fb6ff;
   --up:#0f7a55; --up-soft:#e2f4ec; --down:#b8400e; --down-soft:#fbeae1;
   --shadow:0 1px 2px rgba(11,37,69,.06),0 6px 18px rgba(11,37,69,.07);
   --shadow-lift:0 4px 10px rgba(11,37,69,.10),0 18px 40px rgba(20,86,214,.18);
-  --band:linear-gradient(180deg,#e9f1fe 0%,#f5f9ff 100%);
+  --band:linear-gradient(160deg,#c6dcff 0%,#d9e8ff 38%,#e6f0ff 100%);
+  /* Page: soft sky gradient with a gentle glow top-right, white cards float on it */
+  --page:radial-gradient(900px 520px at 88% -8%,rgba(122,176,255,.45),transparent 65%),
+         radial-gradient(700px 420px at -10% 30%,rgba(160,200,255,.35),transparent 70%),
+         linear-gradient(180deg,#dbe9ff 0%,#e6f0ff 40%,#eef5ff 100%);
   --f-display:"Archivo",system-ui,-apple-system,"Segoe UI",sans-serif;
   --f-body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
   --f-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Consolas,monospace;
@@ -27,7 +31,8 @@
   --up:#4fd1a0; --up-soft:#0f3a33; --down:#ff9a6b; --down-soft:#43231a;
   --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 18px rgba(0,0,0,.25);
   --shadow-lift:0 4px 10px rgba(0,0,0,.35),0 18px 40px rgba(60,120,255,.22);
-  --band:linear-gradient(180deg,#0b1e3d 0%,#06132a 100%);
+  --band:linear-gradient(160deg,#0f2a57 0%,#0a1f42 45%,#06132a 100%);
+  --page:radial-gradient(900px 520px at 88% -8%,rgba(60,120,255,.22),transparent 65%),linear-gradient(180deg,#071a38 0%,#06132a 100%);
   color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#06132a; --surface:#0c2142; --ink:#e7effb; --muted:#9bb0cf; --line:#1c3863;
@@ -35,11 +40,12 @@
   --up:#4fd1a0; --up-soft:#0f3a33; --down:#ff9a6b; --down-soft:#43231a;
   --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 18px rgba(0,0,0,.25);
   --shadow-lift:0 4px 10px rgba(0,0,0,.35),0 18px 40px rgba(60,120,255,.22);
-  --band:linear-gradient(180deg,#0b1e3d 0%,#06132a 100%);
+  --band:linear-gradient(160deg,#0f2a57 0%,#0a1f42 45%,#06132a 100%);
+  --page:radial-gradient(900px 520px at 88% -8%,rgba(60,120,255,.22),transparent 65%),linear-gradient(180deg,#071a38 0%,#06132a 100%);
   color-scheme:dark}
 
 *{box-sizing:border-box}
-body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:16px;line-height:1.55}
+body{margin:0;background:var(--bg);background-image:var(--page);background-attachment:fixed;color:var(--ink);font-family:var(--f-body);font-size:16px;line-height:1.55}
 a{color:var(--blue)}
 button,select,input{font:inherit;color:inherit}
 :focus-visible{outline:3px solid var(--blue);outline-offset:2px;border-radius:6px}
@@ -65,7 +71,7 @@ button,select,input{font:inherit;color:inherit}
 }
 
 /* This week band */
-.week{background:var(--band);border-bottom:1px solid var(--line);padding-block:36px 40px;position:relative;overflow:hidden}
+.week{background:var(--band);border-bottom:1px solid var(--line);box-shadow:inset 0 -1px 0 rgba(255,255,255,.5);padding-block:36px 40px;position:relative;overflow:hidden}
 .week .wrap{position:relative}
 .week-orbit{position:absolute;right:-120px;top:-140px;width:520px;height:520px;pointer-events:none;opacity:.55}
 .eyebrow{font-family:var(--f-mono);font-size:.76rem;letter-spacing:.12em;text-transform:uppercase;color:var(--blue)}
@@ -116,6 +122,8 @@ button,select,input{font:inherit;color:inherit}
 @keyframes scan{from{top:-30%}to{top:105%}}
 .chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--f-mono);font-size:.72rem;letter-spacing:.05em;text-transform:uppercase;font-weight:500;padding:4px 9px;border-radius:999px;background:var(--surface);color:var(--ink);border:1px solid var(--line)}
 .chip svg{width:14px;height:14px}
+.thumb .pending-pic{position:absolute;inset:0;display:grid;place-items:center;color:var(--blue);background:repeating-linear-gradient(135deg,var(--blue-soft) 0 14px,color-mix(in srgb,var(--blue-soft) 70%,var(--surface)) 14px 28px)}
+.thumb .pending-pic svg{width:46px;height:46px;opacity:.55}
 .thumb .chip{position:absolute;left:10px;top:10px;background:color-mix(in srgb,var(--surface) 90%,transparent);backdrop-filter:blur(6px);border-color:transparent}
 .badge{display:inline-flex;align-items:center;gap:4px;font-family:var(--f-mono);font-size:.8rem;font-weight:500;padding:3px 8px;border-radius:8px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .badge.bad{background:var(--down-soft);color:var(--down)}
@@ -320,7 +328,7 @@ dialog[open]{animation:pop .3s cubic-bezier(.2,.8,.2,1)}
     </div>
     <div class="foot-bottom">
       <span>© 2026 UniverGen Technologies. VaanAI is independent and is not affiliated with or endorsed by NASA, ESA, USGS or ISRO.</span>
-      <span>Insight preview images on this prototype are illustrative. News images belong to the credited publishers.</span>
+      <span>Where no satellite picture was saved, insight previews are illustrations. News images belong to the credited publishers.</span>
     </div>
   </div>
 </footer>
@@ -364,89 +372,22 @@ const CATS = {
   polar:       {label:'Polar changes', metric:'Ice & snow cover',   unit:'km²', dec:1, badIf:'down', index:'NDSI', short:'ice and snow cover'}
 };
 
-/* ---------- Sample records (shape mirrors one row per analysis run) ----------
-   recs are newest first: d = analysis date, f = baseline date, b = baseline value, a = latest value */
-let SITES = [
- {id:'mettur',cat:'water',name:'Mettur Dam (Stanley Reservoir)',district:'Salem',state:'Tamil Nadu',lat:11.80,lon:77.80,sensor:'Sentinel-2 L2A, 10 m',recs:[
-  {d:'2026-10-02',f:'2026-09-02',b:128.4,a:141.9,s:'Water spread grew after strong Cauvery inflows from Karnataka. The northern arms near Pannavadi have refilled.'},
-  {d:'2026-09-02',f:'2026-08-03',b:119.6,a:128.4,s:'Steady rise through August as monsoon releases reached the reservoir.'},
-  {d:'2026-08-03',f:'2026-07-04',b:96.2,a:119.6,s:'Sharp recovery from the summer low as the southwest monsoon set in.'}]},
- {id:'bhavanisagar',cat:'water',name:'Bhavanisagar Reservoir',district:'Erode',state:'Tamil Nadu',lat:11.47,lon:77.11,sensor:'Sentinel-2 L2A, 10 m',recs:[
-  {d:'2026-09-30',f:'2026-08-31',b:62.1,a:58.4,s:'A slight drawdown as releases to the Lower Bhavani canal continued.'},
-  {d:'2026-08-31',f:'2026-07-31',b:51.0,a:62.1,s:'Storage rose with inflows from the Nilgiris catchment.'}]},
- {id:'vaigai',cat:'water',name:'Vaigai Dam',district:'Theni',state:'Tamil Nadu',lat:10.05,lon:77.59,sensor:'Sentinel-2 L2A, 10 m',recs:[
-  {d:'2026-09-29',f:'2026-08-30',b:17.8,a:14.9,s:'Water spread fell by about a sixth. Exposed bed is visible along the upstream end.'},
-  {d:'2026-08-30',f:'2026-07-31',b:16.2,a:17.8,s:'Small gain from Periyar diversion inflows.'}]},
- {id:'chembarambakkam',cat:'water',name:'Chembarambakkam Lake',district:'Kancheepuram',state:'Tamil Nadu',lat:13.01,lon:80.06,sensor:'Sentinel-2 L2A, 10 m',recs:[
-  {d:'2026-10-01',f:'2026-09-01',b:19.2,a:16.7,s:'Storage fell ahead of the northeast monsoon. Exposed bed is showing along the western bund.'}]},
- {id:'puzhal',cat:'water',name:'Puzhal Lake',district:'Tiruvallur',state:'Tamil Nadu',lat:13.16,lon:80.17,sensor:'Sentinel-2 L2A, 10 m',recs:[
-  {d:'2026-10-01',f:'2026-09-01',b:15.9,a:15.4,s:'Broadly stable. Small losses along the southern shallows.'}]},
- {id:'krs',cat:'water',name:'Krishnaraja Sagar',district:'Mandya',state:'Karnataka',lat:12.42,lon:76.57,sensor:'Sentinel-2 L2A, 10 m',recs:[
-  {d:'2026-09-28',f:'2026-08-29',b:108.7,a:117.3,s:'Near full reservoir level after late-September rain in Kodagu.'}]},
- {id:'nagarjuna',cat:'water',name:'Nagarjuna Sagar',district:'Nalgonda',state:'Telangana',lat:16.57,lon:79.31,sensor:'NASA HLS, 30 m',recs:[
-  {d:'2026-09-30',f:'2026-08-31',b:236.5,a:268.2,s:'Krishna floodwaters lifted water spread by 13%. Side valleys are filling again.'}]},
- {id:'lakemead',cat:'water',name:'Lake Mead',district:'Clark County',state:'Nevada (USA)',lat:36.25,lon:-114.40,sensor:'NASA HLS, 30 m',recs:[
-  {d:'2026-09-30',f:'2026-09-01',b:305.1,a:298.6,s:'VaanAI’s first test site. The shoreline kept retreating along the Overton Arm.'},
-  {d:'2026-09-01',f:'2026-08-02',b:309.8,a:305.1,s:'Summer evaporation and releases continued to pull the lake down.'}]},
-
- {id:'nilgiris',cat:'vegetation',name:'Mudumalai–Nilgiris slopes',district:'Nilgiris',state:'Tamil Nadu',lat:11.56,lon:76.60,sensor:'Sentinel-2 L2A, 10 m',recs:[
-  {d:'2026-09-30',f:'2026-08-31',b:0.71,a:0.76,s:'Forest canopy is at its greenest this year after a wet September.'}]},
- {id:'pollachi',cat:'vegetation',name:'Pollachi farmland',district:'Coimbatore',state:'Tamil Nadu',lat:10.66,lon:77.00,sensor:'Sentinel-2 L2A, 10 m',recs:[
-  {d:'2026-10-02',f:'2026-09-02',b:0.48,a:0.56,s:'Coconut groves and new paddy fields greened up after the September showers.'},
-  {d:'2026-09-02',f:'2026-08-03',b:0.51,a:0.48,s:'A dry spell slightly lowered crop vigour.'}]},
- {id:'wayanad',cat:'vegetation',name:'Wayanad hills',district:'Wayanad',state:'Kerala',lat:11.68,lon:76.13,sensor:'Sentinel-2 L2A, 10 m',recs:[
-  {d:'2026-09-29',f:'2026-08-30',b:0.79,a:0.77,s:'Dense cover holds steady. Small losses along the new road cuts near Kalpetta.'}]},
- {id:'ludhiana',cat:'vegetation',name:'Ludhiana croplands',district:'Ludhiana',state:'Punjab',lat:30.90,lon:75.85,sensor:'NASA HLS, 30 m',recs:[
-  {d:'2026-10-03',f:'2026-09-26',b:0.68,a:0.41,s:'The paddy harvest is well under way. Large blocks are now bare stubble.'}]},
-
- {id:'sangrur',cat:'fire',name:'Sangrur crop-residue fires',district:'Sangrur',state:'Punjab',lat:30.24,lon:75.84,sensor:'VIIRS 375 m + Sentinel-2',recs:[
-  {d:'2026-10-03',f:'2026-09-26',b:85,a:960,s:'The first large stubble fires of the season. 214 thermal hotspots were detected in seven days.'}]},
- {id:'similipal',cat:'fire',name:'Similipal forest',district:'Mayurbhanj',state:'Odisha',lat:21.85,lon:86.35,sensor:'MODIS / VIIRS + Sentinel-2',recs:[
-  {d:'2026-04-20',f:'2026-03-21',b:1150,a:4870,s:'Peak fire season. Burn scars spread across the southern core zone.'},
-  {d:'2026-03-21',f:'2026-02-19',b:210,a:1150,s:'Early-season ground fires along the buffer villages.'}]},
- {id:'bodi',cat:'fire',name:'Bodi hills',district:'Theni',state:'Tamil Nadu',lat:10.01,lon:77.33,sensor:'VIIRS 375 m + Sentinel-2',recs:[
-  {d:'2026-03-30',f:'2026-02-28',b:12,a:148,s:'Grassland fires on the upper slopes during a dry March.'}]},
- {id:'nainital',cat:'fire',name:'Nainital forests',district:'Nainital',state:'Uttarakhand',lat:29.38,lon:79.45,sensor:'MODIS / VIIRS + Sentinel-2',recs:[
-  {d:'2026-05-15',f:'2026-04-15',b:320,a:2140,s:'Pine forest fires spread across several ranges before pre-monsoon rain.'}]},
-
- {id:'parandur',cat:'construction',name:'Parandur airport site',district:'Kancheepuram',state:'Tamil Nadu',lat:12.93,lon:79.79,sensor:'Sentinel-2 L2A, 10 m',recs:[
-  {d:'2026-09-29',f:'2026-06-30',b:0.42,a:0.88,s:'Site grading and new access roads are visible on the eastern block.'}]},
- {id:'sriperumbudur',cat:'construction',name:'Sriperumbudur industrial corridor',district:'Kancheepuram',state:'Tamil Nadu',lat:12.97,lon:79.95,sensor:'Sentinel-2 L2A, 10 m',recs:[
-  {d:'2026-09-29',f:'2026-06-30',b:18.4,a:19.1,s:'New factory sheds along the Oragadam stretch.'}]},
- {id:'cbe-ring',cat:'construction',name:'Coimbatore western ring road',district:'Coimbatore',state:'Tamil Nadu',lat:11.02,lon:76.90,sensor:'Sentinel-2 L2A, 10 m',recs:[
-  {d:'2026-10-02',f:'2026-07-03',b:1.10,a:1.36,s:'Road alignment cleared and layouts are filling in along the corridor.'}]},
- {id:'navimumbai',cat:'construction',name:'Navi Mumbai airport area',district:'Raigad',state:'Maharashtra',lat:18.99,lon:73.07,sensor:'Sentinel-2 L2A, 10 m',recs:[
-  {d:'2026-09-28',f:'2026-06-29',b:6.8,a:7.3,s:'Terminal-side expansion and new link roads to the south.'}]},
-
- {id:'dhemaji',cat:'flood',name:'Brahmaputra floodplain',district:'Dhemaji',state:'Assam',lat:27.48,lon:94.58,sensor:'Sentinel-1 SAR, 10 m',recs:[
-  {d:'2026-09-27',f:'2026-09-15',b:212,a:486,s:'A late-season flood pulse spilled into low-lying villages north of the river.'},
-  {d:'2026-09-15',f:'2026-08-30',b:390,a:212,s:'Floodwater receded from the July peak.'}]},
- {id:'velachery',cat:'flood',name:'Velachery & Pallikaranai marsh',district:'Chennai',state:'Tamil Nadu',lat:12.95,lon:80.21,sensor:'Sentinel-1 SAR, 10 m',recs:[
-  {d:'2026-09-30',f:'2026-09-18',b:3.1,a:4.6,s:'Standing water after heavy rain on 27 September. The marsh is absorbing most of it.'}]},
- {id:'kuttanad',cat:'flood',name:'Kuttanad wetlands',district:'Alappuzha',state:'Kerala',lat:9.40,lon:76.40,sensor:'Sentinel-1 SAR, 10 m',recs:[
-  {d:'2026-08-18',f:'2026-08-06',b:44,a:131,s:'Paddy polders went under after a week of heavy rain.'}]},
-
- {id:'gangotri',cat:'polar',name:'Gangotri Glacier',district:'Uttarkashi',state:'Uttarakhand',lat:30.92,lon:79.08,sensor:'Sentinel-2 L2A, 10 m',recs:[
-  {d:'2026-09-28',f:'2026-06-30',b:141.2,a:128.6,s:'The end-of-summer snowline is at its highest this year. The debris-covered tongue is fully exposed.'}]},
- {id:'drangdrung',cat:'polar',name:'Drang-Drung Glacier',district:'Kargil',state:'Ladakh',lat:33.83,lon:76.33,sensor:'NASA HLS, 30 m',recs:[
-  {d:'2026-09-26',f:'2026-06-28',b:74.0,a:70.9,s:'Seasonal melt exposed more bare ice on the lower glacier.'}]},
- {id:'larsemann',cat:'polar',name:'Sea ice near Bharati station',district:'Larsemann Hills',state:'Antarctica',lat:-69.41,lon:76.19,sensor:'Sentinel-1 SAR, 40 m',recs:[
-  {d:'2026-09-30',f:'2026-08-31',b:6820,a:7105,s:'Late-winter sea ice kept growing within 50 km of the station.'}]}
-];
-
-// Sample sites have no country/place field: fill them in so the filters work on them too.
-SITES.forEach(s => {
-  s.country = s.state.includes('(USA)') ? 'United States' : s.state === 'Antarctica' ? 'Antarctica' : 'India';
-  s.place = s.place || '';
-});
+/* ---------- Sites: filled ONLY from the Supabase tables (see loadWater) ---------- */
+let SITES = [];
 
 /* ---------- Live water data (Supabase) ----------
    monitored_locations_water = the list of water bodies (one tile each)
    water_insights            = the results, linked by water_insights.location_id -> monitored_locations_water.id
-   When both load, they REPLACE the sample water sites above. If Supabase can't
-   be reached, the samples stay so the page never looks empty. */
+   Nothing on the page is sample data: if Supabase can't be reached, the page
+   says so instead of showing made-up sites. */
 let LOCS = [];          // active rows of monitored_locations_water (drive the filter dropdowns)
-let liveWater = false;  // true once real water data has loaded
+let INSIGHTS = [];      // every water_insights row (drives the "this week" numbers)
+let loadFailed = false; // true if the tables could not be read
+
+// Functions (insight types) that have backend tables. Only these are shown in
+// the Functions panel. To add e.g. Vegetation later: create its two tables,
+// load them like loadWater, and add its key here.
+const BACKED = ['water'];
 
 async function sbGet(path){
   const res = await fetch(`${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/${path}`,
@@ -461,19 +402,21 @@ function sensorLabel(loc){
   return s2 ? 'Sentinel-2 L2A, 10 m' : 'NASA HLS, 30 m';
 }
 async function loadWater(){
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return;
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) { loadFailed = true; return; }
   try {
     const [locs, ins] = await Promise.all([
       sbGet('monitored_locations_water?select=id,name,place,district,state,country,type,uses,min_lon,min_lat,max_lon,max_lat,sensor&active=eq.true&order=name.asc'),
-      sbGet('water_insights?select=id,location_id,location,before_date,after_date,before_value,after_value,summary,confidence,before_image_url,after_image_url,created_at&order=after_date.desc,created_at.desc&limit=10000'),
+      sbGet('water_insights?select=id,location_id,location,before_date,after_date,before_value,after_value,summary,confidence,before_image_url,after_image_url,created_at,modified_at&order=after_date.desc,created_at.desc&limit=10000'),
     ]);
-    if (!Array.isArray(locs) || !locs.length) return;
+    INSIGHTS = Array.isArray(ins) ? ins : [];
+    if (!Array.isArray(locs)) throw new Error('unexpected response');
     const byId = new Map(locs.map(l => [l.id, []])), idByName = new Map(locs.map(l => [l.name, l.id]));
     for (const r of ins || []) {
       const id = r.location_id ?? idByName.get(r.location);   // older rows: fall back to matching the name
       if (byId.has(id) && r.after_date && r.before_date) byId.get(id).push({
         d: r.after_date, f: r.before_date, b: +r.before_value, a: +r.after_value,
-        s: r.summary || '', conf: r.confidence || '', imgB: safeUrl(r.before_image_url), imgA: safeUrl(r.after_image_url)
+        s: r.summary || '', conf: r.confidence || '', imgB: safeUrl(r.before_image_url), imgA: safeUrl(r.after_image_url),
+        c: r.modified_at || r.created_at
       });
     }
     LOCS = locs;
@@ -485,8 +428,7 @@ async function loadWater(){
       recs: byId.get(l.id)
     }));
     SITES = SITES.filter(s => s.cat !== 'water').concat(live);
-    liveWater = true;
-  } catch (err) { console.warn('[VaanAI] Could not load water insights, showing samples instead:', err); }
+  } catch (err) { loadFailed = true; console.error('[VaanAI] Could not load water insights:', err); }
 }
 
 /* ---------- Helpers ---------- */
@@ -574,28 +516,33 @@ function paint(canvas, cat, seed, lvl, W = 200, H = 125){
 /* ---------- Derived data ---------- */
 const latest = s => s.recs[0];          // undefined for a site that has no reading yet
 const iso = d => d.toISOString().slice(0, 10);
+// "This week" = results saved (or updated) in the last 7 days, read from the tables.
 let inWeek = [];
 function computeDerived(){
-  const allLatest = SITES.filter(s => s.recs.length).map(s => ({s, r: latest(s)}));
-  const newestDate = allLatest.map(x => x.r.d).sort().pop();
-  if (!newestDate) { inWeek = []; return; }
-  const weekEnd = new Date(newestDate + 'T00:00:00');
-  const weekStart = new Date(weekEnd); weekStart.setDate(weekEnd.getDate() - 6);
-  inWeek = allLatest.filter(x => x.r.d >= iso(weekStart));
+  const since = Date.now() - 7 * 24 * 3600 * 1000;
+  inWeek = SITES.flatMap(s => s.recs.filter(r => r.c && new Date(r.c).getTime() >= since).map(r => ({s, r})));
 }
 
 /* ---------- This week ---------- */
 function thumbHTML(s, r, size='tile'){
-  const pic = r && r.imgA
-    ? `<img src="${esc(r.imgA)}" alt="" loading="lazy" data-site="${s.id}">`
+  const pic = !r ? `<div class="pending-pic" aria-hidden="true">${icon(s.cat)}</div>`   // no data yet: no drawn picture
+    : r.imgA ? `<img src="${esc(r.imgA)}" alt="" loading="lazy" data-site="${s.id}">`
     : `<canvas data-site="${s.id}" data-rec="0" aria-hidden="true"></canvas>`;
   const tag = r ? badge(s.cat, r) : `<span class="badge neutral">Awaiting first reading</span>`;
   return `<div class="thumb">${pic}<span class="chip">${icon(s.cat)}${esc(CATS[s.cat].label)}</span>${tag}</div>`;
 }
 function renderWeek(){
+  if (loadFailed) { $('#stats').innerHTML = ''; return; }
+  // sites watched   = active rows in monitored_locations_water
+  // updates / week  = water_insights rows saved in the last 7 days
+  // changes flagged = of those, the ones moving the worrying way (e.g. water falling by 2% or more)
+  // insight types   = functions that have backend data
   const concerns = inWeek.filter(x => tone(x.s.cat, x.r) === 'bad').length;
+  const types = BACKED.filter(k => SITES.some(s => s.cat === k)).length;
   $('#stats').innerHTML = [
-    [SITES.length, 'sites watched'], [inWeek.length, 'insight updates this week'], [concerns, 'changes flagged'], [Object.keys(CATS).length, 'insight types']
+    [SITES.length, SITES.length === 1 ? 'site watched' : 'sites watched'],
+    [inWeek.length, 'insight updates this week'], [concerns, 'changes flagged'],
+    [types, types === 1 ? 'insight type' : 'insight types']
   ].map(([n, l]) => `<li><b>${n}</b>${l}</li>`).join('');
 }
 
@@ -767,7 +714,8 @@ const store = { get(k){ try { return JSON.parse(localStorage.getItem('vaanai:' +
                 set(k, v){ try { localStorage.setItem('vaanai:' + k, JSON.stringify(v)); } catch {} } };
 // Country and state start on India / Tamil Nadu; the visitor's last choice is remembered.
 const pref = (k, def) => { const v = store.get('f.' + k); return v === null ? def : v; };
-const state = { cats: new Set(store.get('cats') || Object.keys(CATS)),
+const savedCats = (store.get('cats') || []).filter(k => BACKED.includes(k));
+const state = { cats: new Set(savedCats.length ? savedCats : BACKED),
   country: pref('country', 'India'), st: pref('st', 'Tamil Nadu'), dist: pref('dist', ''), place: pref('place', '') };
 const saveLoc = () => ['country', 'st', 'dist', 'place'].forEach(k => store.set('f.' + k, state[k]));
 const uniq = arr => [...new Set(arr.filter(Boolean))].sort((a, b) => a.localeCompare(b));
@@ -778,7 +726,7 @@ const inArea = (x, upTo) => (upTo < 1 || !state.country || x.country === state.c
 const check = '<svg viewBox="0 0 12 12" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.2l2.3 2.3 4.7-5"/></svg>';
 
 function renderFns(){
-  $('#fnList').innerHTML = Object.entries(CATS).map(([k, c]) => `
+  $('#fnList').innerHTML = BACKED.map(k => [k, CATS[k]]).map(([k, c]) => `
     <div class="fn"><input type="checkbox" id="fn-${k}" value="${k}" ${state.cats.has(k) ? 'checked' : ''}>
     <label for="fn-${k}"><span class="box">${check}</span>${icon(k, 'ico')}${esc(c.label)} <span class="count">${SITES.filter(s => s.cat === k).length}</span></label></div>`).join('');
 }
@@ -811,7 +759,9 @@ function renderResults(){
   const key = s => latest(s)?.d || '';
   const byCat = SITES.filter(s => state.cats.has(s.cat)).sort((a, b) => key(b).localeCompare(key(a)) || a.name.localeCompare(b.name));
   const out = $('#results');
-  if (!state.cats.size) { out.innerHTML = `<div class="results-meta"></div><div class="empty"><b>Pick at least one function</b>Tick Water Monitor, Vegetation or any other function above to see insights.</div>`; return; }
+  if (loadFailed) { out.innerHTML = `<div class="results-meta"></div><div class="empty"><b>Insights could not be loaded</b>The VaanAI database didn't respond. Please refresh the page in a minute.</div>`; return; }
+  if (!SITES.length) { out.innerHTML = `<div class="results-meta"></div><div class="empty"><b>No sites are being watched yet</b>Water bodies appear here as soon as they are added to VaanAI.</div>`; return; }
+  if (!state.cats.size) { out.innerHTML = `<div class="results-meta"></div><div class="empty"><b>Pick at least one function</b>Tick Water Monitor above to see insights.</div>`; return; }
   const where = [state.place, state.dist, state.st, state.country].filter(Boolean).slice(0, 2).join(', ') || 'All regions';
   const main = byCat.filter(s => inArea(s, 4));
   let html = `<div class="results-meta"><h3>Latest insights · ${esc(where)}</h3><span>${main.length} site${main.length === 1 ? '' : 's'}</span></div>`;
@@ -916,8 +866,7 @@ function openDetail(id, recIdx = 0){
         <button class="sbtn" id="copyBtn" type="button">${SHARE_ICONS.link}Copy link</button>
       </div>
       ${realPics ? `<p class="note">True-colour satellite views of the analysed area. The water figures are measured from the full-resolution data.</p>`
-                 : s.live ? `<p class="note">No satellite pictures were saved for this site, so the preview is illustrative. The figures are real measurements.</p>`
-                          : `<p class="note">Preview images on this prototype are illustrative. The live site will show the real before and after scenes from VaanAI's pipeline.</p>`}
+                 : `<p class="note">No satellite pictures were saved for this reading, so the preview is an illustration. The figures are real measurements.</p>`}
     </div>`;
   const cmp = $('#cmp'), seed = hashStr(s.id);
   const paintCmp = () => {
@@ -975,7 +924,7 @@ $('#fnList').addEventListener('change', e => {
   e.target.checked ? state.cats.add(e.target.value) : state.cats.delete(e.target.value);
   store.set('cats', [...state.cats]); renderResults();
 });
-$('#fnAll').addEventListener('click', () => { state.cats = new Set(Object.keys(CATS)); store.set('cats', [...state.cats]); renderFns(); renderResults(); });
+$('#fnAll').addEventListener('click', () => { state.cats = new Set(BACKED); store.set('cats', [...state.cats]); renderFns(); renderResults(); });
 $('#fnNone').addEventListener('click', () => { state.cats.clear(); store.set('cats', []); renderFns(); renderResults(); });
 // Changing a level clears the levels below it. Picking a district or place with
 // "All" above it fills in the levels above from the matching location.
