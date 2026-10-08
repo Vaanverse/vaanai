@@ -222,9 +222,15 @@ def save_insight(record: dict) -> None:
         # The look-up runs again on every retry, so if an earlier attempt's
         # insert did reach the database, the retry updates that row instead of
         # adding a duplicate.
+        # Match today's row by location_id when we have it (the reliable link to
+        # monitored_locations_water), otherwise by the location name as before.
+        query = table.select("*")
+        if record.get("location_id") is not None:
+            query = query.eq("location_id", record["location_id"])
+        else:
+            query = query.eq("location", record["location"])
         todays_rows = (
-            table.select("*")
-            .eq("location", record["location"])
+            query
             .gte("created_at", day_start.isoformat())
             .lt("created_at", day_end.isoformat())
             .order("created_at", desc=True)

@@ -26,6 +26,7 @@ Usage
 """
 
 import argparse
+import calendar
 import json
 import logging
 import math
@@ -50,14 +51,16 @@ GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 MODEL = "openai/gpt-oss-20b"  # confirmed available on this account; use --model to try openai/gpt-oss-120b for higher quality
 AOI_BBOX = None
 MEDIA_NEEDED = True  # set in main() from --media-needed; False = save the numbers only, no before/after images
+LOCATION_ID = None   # set in main() from --location-id; saved as water_insights.location_id
 
-# Same-date-last-year comparison (set in main()). Satellites don't image a place
-# every day (Sentinel-2 ~5 days, HLS ~2-3 days) and clouds hide some days, so we
-# use the clear scene CLOSEST to each target date, searched within a fixed window:
-#   "after"  = target date (default: today)        window [target - N days, target]
-#   "before" = same calendar date one year earlier window [that date - N, that date + N]
-# fetch_scene only accepts date ranges inside these windows.
-WINDOW_DAYS = 15
+# Month-vs-same-month-last-year comparison (set in main()). A run on, say,
+# 1 October compares the PREVIOUS calendar month with the same month a year earlier:
+#   "after"  = September this year  -> the LATEST clear scene in 1-30 Sep
+#   "before" = September last year  -> the LATEST clear scene in 1-30 Sep last year
+# "Latest" = closest to the month's last day. Satellites don't image a place every
+# day (Sentinel-2 ~5 days, HLS ~2-3 days) and clouds hide some days, so the scene
+# picked is the last CLEAR one in the month. fetch_scene only accepts date ranges
+# inside these two months.
 WINDOWS: dict = {}   # {"after": (start, end, target), "before": (start, end, target)} as date objects
 
 # Data source: NASA HLS (30 m) for large areas, Sentinel-2 L2A (10 m) for small
@@ -193,18 +196,21 @@ def _acq_day(granule) -> str:
     return granule["umm"]["GranuleUR"].split(".")[3][:7]
 
 
-def same_day_last_year(d: date) -> date:
-    """Same calendar date one year earlier (29 Feb -> 28 Feb)."""
-    try:
-        return d.replace(year=d.year - 1)
-    except ValueError:
-        return d.replace(year=d.year - 1, day=28)
+def month_bounds(year: int, month: int) -> tuple[date, date]:
+    """First and last day of a calendar month."""
+    return date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1])
 
 
-def set_comparison_windows(target: date, window_days: int) -> None:
-    last_year = same_day_last_year(target)
-    WINDOWS["after"] = (target - timedelta(days=window_days), target, target)
-    WINDOWS["before"] = (last_year - timedelta(days=window_days), last_year + timedelta(days=window_days), last_year)
+def set_comparison_windows(run_date: date) -> None:
+    """Previous calendar month (relative to run_date) vs the same month one year
+    earlier. The target in each is the month's last day, so the LATEST clear
+    scene of each month is used."""
+    prev_month_last_day = run_date.replace(day=1) - timedelta(days=1)
+    y, m = prev_month_last_day.year, prev_month_last_day.month
+    start, end = month_bounds(y, m)
+    ly_start, ly_end = month_bounds(y - 1, m)
+    WINDOWS["after"] = (start, end, end)
+    WINDOWS["before"] = (ly_start, ly_end, ly_end)
 
 
 def _snap_to_window(args: dict):
@@ -234,6 +240,14 @@ def _snap_to_window(args: dict):
     return s.isoformat(), e.isoformat(), target.isoformat()
 
 
+def _no_scene_message(source: str, args: dict) -> str:
+    if WINDOWS:
+        return (f"No usable {source} scene exists anywhere in {args['start_date']}..{args['end_date']}. "
+                "The comparison months are fixed and cannot be widened, so do NOT retry this period. "
+                "If you have a scene for the other period, stop and explain that no comparison is possible.")
+    return f"No usable {source} scenes found for that range. Try a different or wider date range."
+
+
 def _days_from(day_iso: str, target_iso: str | None):
     if not target_iso:
         return None
@@ -248,9 +262,9 @@ def _fetch_scene_s2(args: dict, target: str | None = None) -> dict:
     bbox = (args["min_lon"], args["min_lat"], args["max_lon"], args["max_lat"])
     try:
         best = s2.best_scene(bbox, args["start_date"], args["end_date"],
-                             max_candidates=8 if target else 6, target_date=target)
+                             max_candidates=12 if target else 6, target_date=target)
         if best is None:
-            return {"error": "No Sentinel-2 scenes found for that range. Try a different or wider date range."}
+            return {"error": _no_scene_message("Sentinel-2", args)}
         day, items, bad, covered = best
         folder = tempfile.mkdtemp(prefix="vaanai_scene_")
         _created_folders.append(folder)
@@ -281,13 +295,24 @@ def tool_fetch_scene(args: dict) -> dict:
     bbox = (args["min_lon"], args["min_lat"], args["max_lon"], args["max_lat"])
     short_name = "HLSL30"   # compute_water_extent assumes Landsat band codes (NIR = B05)
     try:
-        granules = eo.search_granules(
-            short_name=short_name, bbox=bbox,
-            start_date=args["start_date"], end_date=args["end_date"],
-            max_results=50, cloud_cover=20,
-        )
+        # HLS downloads whole 110 km tiles (hundreds of MB), so prefer tiles that
+        # are mostly clear. In the monsoon there may be none under 20% in a month,
+        # so fall back to tiles up to 60% cloudy — compute_water_extent masks the
+        # clouds and warns if the water body itself is covered.
+        granules = []
+        for max_cloud in (20, 60):
+            granules = eo.search_granules(
+                short_name=short_name, bbox=bbox,
+                start_date=args["start_date"], end_date=args["end_date"],
+                max_results=50, cloud_cover=max_cloud,
+            )
+            if granules:
+                if max_cloud > 20:
+                    log.info("No HLS tile under 20%% cloud in %s..%s - using tiles up to %d%%.",
+                             args["start_date"], args["end_date"], max_cloud)
+                break
         if not granules:
-            return {"error": "No clear (<20% cloud) scenes found for that range. Try a different or wider date range."}
+            return {"error": _no_scene_message("HLS", args)}
 
         # The bbox can span several tiles. Group tiles by the day they were
         # captured, then pick the day whose tiles together cover the bbox best,
@@ -551,6 +576,8 @@ def persist_result(final_args: dict, location: str) -> None:
             "confidence": confidence,
             "before_image_url": before_url,
             "after_image_url": after_url,
+            # link to monitored_locations_water.id (None for manual runs without --location-id)
+            "location_id": LOCATION_ID,
         }
     )
 
@@ -823,13 +850,10 @@ def parse_args() -> argparse.Namespace:
         help="'true' (default) = also save before/after preview images; 'false' = save the numbers only.",
     )
     parser.add_argument(
-        "--target-date", default=None, metavar="YYYY-MM-DD",
-        help="Compare this date with the same date one year earlier (default: today, UTC). "
+        "--run-date", default=None, metavar="YYYY-MM-DD",
+        help="Pretend the run happens on this date (default: today, UTC). The PREVIOUS month of this "
+             "date is compared with the same month a year earlier, e.g. 2026-10-01 -> Sep 2026 vs Sep 2025. "
              "Use 'none' to let the model choose its own dates (old behaviour).",
-    )
-    parser.add_argument(
-        "--window-days", type=int, default=WINDOW_DAYS,
-        help=f"How many days around each target date to search for a clear scene (default: {WINDOW_DAYS}).",
     )
     parser.add_argument(
         "--location-id", type=int, default=None,
@@ -845,7 +869,7 @@ def bbox_area_km2(bbox) -> float:
 
 
 def main() -> None:
-    global MODEL, AOI_BBOX, DATA_SOURCE, DATA_RES, MEDIA_NEEDED
+    global MODEL, AOI_BBOX, DATA_SOURCE, DATA_RES, MEDIA_NEEDED, LOCATION_ID
     load_dotenv()
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -856,6 +880,7 @@ def main() -> None:
     MODEL = args.model
     AOI_BBOX = tuple(args.bbox)
     MEDIA_NEEDED = args.media_needed == "true"
+    LOCATION_ID = args.location_id
 
     area = bbox_area_km2(AOI_BBOX)
     DATA_SOURCE = args.source if args.source != "auto" else ("s2" if area < SMALL_AOI_KM2 else "hls")
@@ -872,22 +897,23 @@ def main() -> None:
         f"Task: {args.goal}\n\n"
     )
 
-    if (args.target_date or "").lower() != "none":
-        target = (datetime.strptime(args.target_date, "%Y-%m-%d").date() if args.target_date
-                  else datetime.now(timezone.utc).date())
-        set_comparison_windows(target, args.window_days)
+    if (args.run_date or "").lower() != "none":
+        run_date = (datetime.strptime(args.run_date, "%Y-%m-%d").date() if args.run_date
+                    else datetime.now(timezone.utc).date())
+        set_comparison_windows(run_date)
         a, b = WINDOWS["after"], WINDOWS["before"]
-        log.info("Comparing %s (search %s..%s) with %s (search %s..%s).", a[2], a[0], a[1], b[2], b[0], b[1])
+        month = a[0].strftime("%B")
+        log.info("Run date %s -> comparing %s %d (%s..%s) with %s %d (%s..%s), latest clear scene of each.",
+                 run_date, month, a[0].year, a[0], a[1], month, b[0].year, b[0], b[1])
         goal_prompt += (
-            "COMPARISON DATES ARE FIXED — compare the same calendar date one year apart:\n"
-            f"- AFTER (recent): the clear scene closest to {a[2]}. Call fetch_scene with "
-            f"start_date={a[0]}, end_date={a[1]}.\n"
-            f"- BEFORE (last year): the clear scene closest to {b[2]}. Call fetch_scene with "
-            f"start_date={b[0]}, end_date={b[1]}.\n"
-            "fetch_scene automatically picks the day closest to the target date and reports "
+            f"COMPARISON PERIOD IS FIXED — compare {month} {a[0].year} with {month} {b[0].year}, "
+            "using the LATEST clear scene of each month:\n"
+            f"- AFTER ({month} {a[0].year}): call fetch_scene with start_date={a[0]}, end_date={a[1]}.\n"
+            f"- BEFORE ({month} {b[0].year}): call fetch_scene with start_date={b[0]}, end_date={b[1]}.\n"
+            "fetch_scene automatically picks the clear day closest to the end of the month and reports "
             "days_from_target. If a scene turns out too cloudy, fetch again with a narrower range "
-            "INSIDE the same window that excludes that scene_date. Ranges outside these two windows "
-            "are rejected. Mention both scene dates in your summary.\n\n"
+            "INSIDE the same month that ends before that scene_date. Ranges outside these two months "
+            "are rejected. Mention both scene dates and the month compared in your summary.\n\n"
             "Fetch both scenes, compute water extent for each, and only call finalize_report once "
             "confident in a conclusion."
         )
