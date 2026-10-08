@@ -409,11 +409,15 @@ function sensorLabel(loc){
 async function loadWater(){
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) { loadFailed = true; return; }
   try {
-    const [locs, ins] = await Promise.all([
-      sbGet('monitored_locations_water?select=id,name,place,district,state,country,type,uses,min_lon,min_lat,max_lon,max_lat,sensor&active=eq.true&order=name.asc'),
-      sbGet('water_insights?select=id,location_id,location,before_date,after_date,before_value,after_value,summary,confidence,before_image_url,after_image_url,created_at,modified_at&order=after_date.desc,created_at.desc&limit=10000'),
-    ]);
+    // Step 1: the insights that are linked to a location (location_id is set).
+    const ins = await sbGet('water_insights?select=id,location_id,location,before_date,after_date,before_value,after_value,summary,confidence,before_image_url,after_image_url,created_at,modified_at'
+      + '&location_id=not.is.null&order=after_date.desc,created_at.desc&limit=10000');
     INSIGHTS = Array.isArray(ins) ? ins : [];
+    // Step 2: fetch ONLY the locations those insights point to.
+    const ids = [...new Set(INSIGHTS.map(r => r.location_id))];
+    const locs = ids.length
+      ? await sbGet(`monitored_locations_water?select=id,name,place,district,state,country,type,uses,min_lon,min_lat,max_lon,max_lat,sensor&id=in.(${ids.join(',')})&order=name.asc`)
+      : [];
     if (!Array.isArray(locs)) throw new Error('unexpected response');
     const byId = new Map(locs.map(l => [l.id, []]));
     // Only results linked by location_id count; rows without it are ignored.
