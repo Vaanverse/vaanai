@@ -10,7 +10,7 @@ git checkout dev
 
 
 git add .
-git commit -m "top 5 news"
+git commit -m "image size"
 git push -u origin dev      # the -u is only needed the very first push; just `git push` after that
 
 optional
