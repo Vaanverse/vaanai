@@ -10,7 +10,7 @@ git checkout dev
 
 
 git add .
-git commit -m "agent and storage modified sue to failure"
+git commit -m "top 5 news"
 git push -u origin dev      # the -u is only needed the very first push; just `git push` after that
 
 optional

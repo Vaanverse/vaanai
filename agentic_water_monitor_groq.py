@@ -430,8 +430,10 @@ def persist_result(final_args: dict, location: str) -> None:
     before_dir = _tempfile.mkdtemp(prefix="vaanai_preview_")
     after_dir = _tempfile.mkdtemp(prefix="vaanai_preview_")
     _created_folders.extend([before_dir, after_dir])
-    before_png = os.path.join(before_dir, "before.png")
-    after_png = os.path.join(after_dir, "after.png")
+    # JPEG, not PNG: a lossless PNG of a large area can exceed 20 MB (see
+    # storage_utils.generate_preview_png); JPEG keeps previews around 1 MB.
+    before_png = os.path.join(before_dir, "before.jpg")
+    after_png = os.path.join(after_dir, "after.jpg")
 
     storage.generate_preview_png(final_args["before_folder"], before_png, bbox=AOI_BBOX)
     storage.generate_preview_png(final_args["after_folder"], after_png, bbox=AOI_BBOX)

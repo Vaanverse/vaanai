@@ -6,7 +6,8 @@ website can actually display:
 
 1. generate_preview_png(): converts a folder of raw HLS band files (which
    are not viewable images on their own — they're scientific data, 16-bit
-   per pixel, not meant for a browser) into an ordinary true-color PNG,
+   per pixel, not meant for a browser) into an ordinary true-color JPEG
+   (capped at MAX_PREVIEW_PX so it stays around 1 MB),
    the kind of "satellite photo" a general audience recognizes.
 
 2. upload_image() / save_insight(): push that PNG and the computed result
@@ -37,8 +38,20 @@ BUCKET_NAME = "insight-images"
 
 # Small areas (e.g. a 4 km box around a small dam) give tiny images at 30 m per
 # pixel (~150 px). Previews whose longest side is below this are enlarged by a
-# whole-number factor so they're comfortable to view. Large areas are unchanged.
+# whole-number factor so they're comfortable to view.
 MIN_PREVIEW_PX = 1000
+
+# Large areas give huge images: a full HLS tile is 3660 x 3660 px, and a
+# Sentinel-2 (10 m) scene of a 30-40 km box is just as big. Saved as lossless
+# PNG that is 20-25+ MB per image — far too heavy for a web page. Previews whose
+# longest side is above this are shrunk to fit (the analysis itself still uses
+# the full-resolution data; only the display picture is reduced).
+MAX_PREVIEW_PX = 2000
+
+# The preview is saved as JPEG at this quality. Satellite photos are "noisy"
+# (every pixel differs slightly), which PNG compresses very poorly. Measured on
+# a real HLS tile at 2000 px: PNG 8.5 MB vs JPEG 1.3 MB, with no visible difference.
+JPEG_QUALITY = 85
 
 
 def _stretch_to_uint8(band: np.ndarray, max_reflectance: float = 3000) -> np.ndarray:
@@ -95,9 +108,21 @@ def generate_preview_png(folder: str, output_path: str, bbox=None) -> str:
     if longest < MIN_PREVIEW_PX:
         factor = -(-MIN_PREVIEW_PX // longest)  # ceiling division
         img = img.resize((img.width * factor, img.height * factor), Image.NEAREST)
+    elif longest > MAX_PREVIEW_PX:
+        # Shrink big previews. LANCZOS averages neighbouring pixels, so the
+        # smaller picture stays smooth instead of jagged. Before and after share
+        # the same grid size, so they're shrunk to exactly the same dimensions.
+        scale = MAX_PREVIEW_PX / longest
+        img = img.resize((max(1, round(img.width * scale)), max(1, round(img.height * scale))), Image.LANCZOS)
 
-    img.save(output_path)
-    log.info("Saved preview image: %s (%dx%d px)", output_path, img.width, img.height)
+    # Format follows the file name: .jpg/.jpeg -> compressed JPEG (recommended),
+    # .png -> lossless PNG (much larger; kept only for backward compatibility).
+    if output_path.lower().endswith((".jpg", ".jpeg")):
+        img.save(output_path, "JPEG", quality=JPEG_QUALITY, optimize=True, progressive=True)
+    else:
+        img.save(output_path, optimize=True)
+    log.info("Saved preview image: %s (%dx%d px, %.2f MB)", output_path, img.width, img.height,
+             os.path.getsize(output_path) / 1_000_000)
     return output_path
 
 
@@ -145,10 +170,12 @@ _with_retries = with_retries
 
 
 def upload_image(local_path: str) -> str:
-    """Uploads a local PNG to the Supabase Storage bucket and returns its
-    public URL. Assumes the bucket is set to Public (see setup instructions)."""
+    """Uploads a local preview image (JPEG or PNG) to the Supabase Storage
+    bucket and returns its public URL. Assumes the bucket is set to Public."""
     client = get_supabase_client()
-    remote_name = f"{uuid.uuid4().hex}.png"
+    is_jpeg = local_path.lower().endswith((".jpg", ".jpeg"))
+    extension, content_type = (".jpg", "image/jpeg") if is_jpeg else (".png", "image/png")
+    remote_name = f"{uuid.uuid4().hex}{extension}"
 
     def _upload():
         with open(local_path, "rb") as f:
@@ -156,7 +183,7 @@ def upload_image(local_path: str) -> str:
             # came back, the retry overwrites that file instead of failing
             # with "already exists".
             client.storage.from_(BUCKET_NAME).upload(
-                remote_name, f, {"content-type": "image/png", "upsert": "true"}
+                remote_name, f, {"content-type": content_type, "upsert": "true"}
             )
 
     with_retries(f"Uploading {os.path.basename(local_path)}", _upload)
