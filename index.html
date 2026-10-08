@@ -150,6 +150,8 @@ button,select,input{font:inherit;color:inherit}
 .fn input:checked+label .box{background:var(--blue);border-color:var(--blue)}
 .fn input:checked+label .box svg{opacity:1}
 .fn input:focus-visible+label{outline:3px solid var(--blue);outline-offset:2px}
+.fn input:disabled+label{opacity:.45;cursor:not-allowed;transform:none;border-color:var(--line);background:var(--surface)}
+.fn input:disabled+label .box{border-color:var(--line)}
 .fn .ico{width:18px;height:18px;color:var(--blue)}
 .fn .count{font-family:var(--f-mono);font-size:.75rem;color:var(--muted);font-weight:400}
 .linkbtn{background:none;border:0;color:var(--blue);cursor:pointer;font-weight:600;padding:6px 4px;font-size:.92rem}
@@ -384,10 +386,13 @@ let LOCS = [];          // active rows of monitored_locations_water (drive the f
 let INSIGHTS = [];      // every water_insights row (drives the "this week" numbers)
 let loadFailed = false; // true if the tables could not be read
 
-// Functions (insight types) that have backend tables. Only these are shown in
-// the Functions panel. To add e.g. Vegetation later: create its two tables,
-// load them like loadWater, and add its key here.
+// Functions (insight types) that have backend tables. All functions are listed
+// in the panel; their counts come from the tables, and a function with 0 sites is
+// shown disabled. To add e.g. Vegetation later: create its two tables, load them
+// like loadWater, and add its key here.
 const BACKED = ['water'];
+const siteCount = k => SITES.filter(s => s.cat === k).length;
+const availableCats = () => Object.keys(CATS).filter(k => siteCount(k) > 0);
 
 async function sbGet(path){
   const res = await fetch(`${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/${path}`,
@@ -410,17 +415,20 @@ async function loadWater(){
     ]);
     INSIGHTS = Array.isArray(ins) ? ins : [];
     if (!Array.isArray(locs)) throw new Error('unexpected response');
-    const byId = new Map(locs.map(l => [l.id, []])), idByName = new Map(locs.map(l => [l.name, l.id]));
+    const byId = new Map(locs.map(l => [l.id, []]));
+    // Only results linked by location_id count; rows without it are ignored.
     for (const r of ins || []) {
-      const id = r.location_id ?? idByName.get(r.location);   // older rows: fall back to matching the name
-      if (byId.has(id) && r.after_date && r.before_date) byId.get(id).push({
+      const id = r.location_id;
+      if (id != null && byId.has(id) && r.after_date && r.before_date) byId.get(id).push({
         d: r.after_date, f: r.before_date, b: +r.before_value, a: +r.after_value,
         s: r.summary || '', conf: r.confidence || '', imgB: safeUrl(r.before_image_url), imgA: safeUrl(r.after_image_url),
         c: r.modified_at || r.created_at
       });
     }
-    LOCS = locs;
-    const live = locs.map(l => ({
+    // A water body is shown only once it has at least one linked result.
+    const withData = locs.filter(l => byId.get(l.id).length);
+    LOCS = withData;                // the filter dropdowns list only these
+    const live = withData.map(l => ({
       id: 'w-' + l.id, locId: l.id, cat: 'water', live: true,
       name: l.name, place: l.place || '', district: l.district || '', state: l.state || '', country: l.country || '',
       kind: l.type || '', uses: l.uses || '',
@@ -538,7 +546,7 @@ function renderWeek(){
   // changes flagged = of those, the ones moving the worrying way (e.g. water falling by 2% or more)
   // insight types   = functions that have backend data
   const concerns = inWeek.filter(x => tone(x.s.cat, x.r) === 'bad').length;
-  const types = BACKED.filter(k => SITES.some(s => s.cat === k)).length;
+  const types = availableCats().length;
   $('#stats').innerHTML = [
     [SITES.length, SITES.length === 1 ? 'site watched' : 'sites watched'],
     [inWeek.length, 'insight updates this week'], [concerns, 'changes flagged'],
@@ -714,8 +722,7 @@ const store = { get(k){ try { return JSON.parse(localStorage.getItem('vaanai:' +
                 set(k, v){ try { localStorage.setItem('vaanai:' + k, JSON.stringify(v)); } catch {} } };
 // Country and state start on India / Tamil Nadu; the visitor's last choice is remembered.
 const pref = (k, def) => { const v = store.get('f.' + k); return v === null ? def : v; };
-const savedCats = (store.get('cats') || []).filter(k => BACKED.includes(k));
-const state = { cats: new Set(savedCats.length ? savedCats : BACKED),
+const state = { cats: new Set(store.get('cats') || Object.keys(CATS)),   // trimmed to functions with data once loaded
   country: pref('country', 'India'), st: pref('st', 'Tamil Nadu'), dist: pref('dist', ''), place: pref('place', '') };
 const saveLoc = () => ['country', 'st', 'dist', 'place'].forEach(k => store.set('f.' + k, state[k]));
 const uniq = arr => [...new Set(arr.filter(Boolean))].sort((a, b) => a.localeCompare(b));
@@ -726,9 +733,13 @@ const inArea = (x, upTo) => (upTo < 1 || !state.country || x.country === state.c
 const check = '<svg viewBox="0 0 12 12" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.2l2.3 2.3 4.7-5"/></svg>';
 
 function renderFns(){
-  $('#fnList').innerHTML = BACKED.map(k => [k, CATS[k]]).map(([k, c]) => `
-    <div class="fn"><input type="checkbox" id="fn-${k}" value="${k}" ${state.cats.has(k) ? 'checked' : ''}>
-    <label for="fn-${k}"><span class="box">${check}</span>${icon(k, 'ico')}${esc(c.label)} <span class="count">${SITES.filter(s => s.cat === k).length}</span></label></div>`).join('');
+  // Keep only functions that have data; if nothing valid is left, select them all.
+  const avail = availableCats();
+  state.cats = new Set([...state.cats].filter(k => avail.includes(k)));
+  if (!state.cats.size) state.cats = new Set(avail);
+  $('#fnList').innerHTML = Object.entries(CATS).map(([k, c]) => `
+    <div class="fn"><input type="checkbox" id="fn-${k}" value="${k}" ${state.cats.has(k) ? 'checked' : ''} ${siteCount(k) ? '' : 'disabled'}>
+    <label for="fn-${k}"><span class="box">${check}</span>${icon(k, 'ico')}${esc(c.label)} <span class="count">${siteCount(k)}</span></label></div>`).join('');
 }
 // Dropdown values come from monitored_locations_water (LOCS); each list only shows
 // values inside the levels above it. Falls back to the sample sites if offline.
@@ -761,7 +772,7 @@ function renderResults(){
   const out = $('#results');
   if (loadFailed) { out.innerHTML = `<div class="results-meta"></div><div class="empty"><b>Insights could not be loaded</b>The VaanAI database didn't respond. Please refresh the page in a minute.</div>`; return; }
   if (!SITES.length) { out.innerHTML = `<div class="results-meta"></div><div class="empty"><b>No sites are being watched yet</b>Water bodies appear here as soon as they are added to VaanAI.</div>`; return; }
-  if (!state.cats.size) { out.innerHTML = `<div class="results-meta"></div><div class="empty"><b>Pick at least one function</b>Tick Water Monitor above to see insights.</div>`; return; }
+  if (!state.cats.size) { out.innerHTML = `<div class="results-meta"></div><div class="empty"><b>Pick at least one function</b>Tick one of the functions above to see insights.</div>`; return; }
   const where = [state.place, state.dist, state.st, state.country].filter(Boolean).slice(0, 2).join(', ') || 'All regions';
   const main = byCat.filter(s => inArea(s, 4));
   let html = `<div class="results-meta"><h3>Latest insights · ${esc(where)}</h3><span>${main.length} site${main.length === 1 ? '' : 's'}</span></div>`;
@@ -924,7 +935,7 @@ $('#fnList').addEventListener('change', e => {
   e.target.checked ? state.cats.add(e.target.value) : state.cats.delete(e.target.value);
   store.set('cats', [...state.cats]); renderResults();
 });
-$('#fnAll').addEventListener('click', () => { state.cats = new Set(BACKED); store.set('cats', [...state.cats]); renderFns(); renderResults(); });
+$('#fnAll').addEventListener('click', () => { state.cats = new Set(availableCats()); store.set('cats', [...state.cats]); renderFns(); renderResults(); });
 $('#fnNone').addEventListener('click', () => { state.cats.clear(); store.set('cats', []); renderFns(); renderResults(); });
 // Changing a level clears the levels below it. Picking a district or place with
 // "All" above it fills in the levels above from the matching location.
