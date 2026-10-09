@@ -10,16 +10,16 @@
 <style>
 /* Layout: sticky three-column header (logo | tagline | future menus) → weekly highlights band → filter panel → tile grid → credits footer */
 :root{
-  --bg:#e6f0ff; --surface:#ffffff; --ink:#0b2545; --muted:#46618a; --line:#cbdaf2;
+  --bg:#cfdcef; --surface:#ffffff; --ink:#0b2545; --muted:#425b80; --line:#b9cbe4;
   --blue:#1456d6; --blue-ink:#ffffff; --blue-deep:#0a2f6b; --blue-soft:#dce8fd; --sky:#7fb6ff;
   --up:#0f7a55; --up-soft:#e2f4ec; --down:#b8400e; --down-soft:#fbeae1;
   --shadow:0 1px 2px rgba(11,37,69,.06),0 6px 18px rgba(11,37,69,.07);
   --shadow-lift:0 4px 10px rgba(11,37,69,.10),0 18px 40px rgba(20,86,214,.18);
-  --band:linear-gradient(160deg,#c6dcff 0%,#d9e8ff 38%,#e6f0ff 100%);
+  --band:linear-gradient(160deg,#aec6e8 0%,#c1d4ee 40%,#cfdcef 100%);
   /* Page: soft sky gradient with a gentle glow top-right, white cards float on it */
-  --page:radial-gradient(900px 520px at 88% -8%,rgba(122,176,255,.45),transparent 65%),
-         radial-gradient(700px 420px at -10% 30%,rgba(160,200,255,.35),transparent 70%),
-         linear-gradient(180deg,#dbe9ff 0%,#e6f0ff 40%,#eef5ff 100%);
+  --page:radial-gradient(900px 520px at 88% -8%,rgba(96,140,210,.30),transparent 65%),
+         radial-gradient(700px 420px at -10% 30%,rgba(130,165,215,.24),transparent 70%),
+         linear-gradient(180deg,#c6d6ec 0%,#cfdcef 40%,#d8e3f2 100%);
   --f-display:"Archivo",system-ui,-apple-system,"Segoe UI",sans-serif;
   --f-body:"Source Sans 3",system-ui,-apple-system,"Segoe UI",sans-serif;
   --f-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Consolas,monospace;
@@ -54,15 +54,15 @@ button,select,input{font:inherit;color:inherit}
 
 /* Header */
 .site-head{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:color-mix(in srgb,var(--surface) 88%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
-.head-grid{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:16px;padding-block:12px}
+.head-grid{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:16px;padding-block:12px;min-height:96px}
 .brand{display:inline-flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink);justify-self:start;border-radius:10px;padding:4px 6px;margin-left:-6px;transition:background .2s}
 .brand:hover{background:var(--blue-soft)}
-.brand svg{width:34px;height:34px;flex:none}
-.brand b{font-family:var(--f-display);font-stretch:112%;font-weight:800;font-size:1.45rem;letter-spacing:-.01em}
+.brand svg{width:46px;height:46px;flex:none}
+.brand b{font-family:var(--f-display);font-stretch:112%;font-weight:800;font-size:1.972rem;letter-spacing:-.01em}
 .brand b span{color:var(--blue)}
 .tagline{text-align:center;min-width:0}
-.tagline strong{display:block;font-family:var(--f-display);font-weight:700;font-size:1.06rem;letter-spacing:-.005em;text-wrap:balance}
-.tagline small{display:block;color:var(--muted);font-size:.93rem}
+.tagline strong{display:block;font-family:var(--f-display);font-weight:700;font-size:1.325rem;letter-spacing:-.005em;text-wrap:balance}
+.tagline small{display:block;color:var(--muted);font-size:1.1625rem}
 .head-right{justify-self:end}
 @media (max-width:820px){
   .head-grid{grid-template-columns:1fr;justify-items:center;gap:4px;padding-block:10px}
@@ -77,7 +77,7 @@ button,select,input{font:inherit;color:inherit}
 .eyebrow{font-family:var(--f-mono);font-size:.76rem;letter-spacing:.12em;text-transform:uppercase;color:var(--blue)}
 .week h1{font-family:var(--f-display);font-stretch:108%;font-weight:750;font-size:clamp(1.7rem,3.4vw,2.5rem);line-height:1.12;margin:.35rem 0 .6rem;letter-spacing:-.015em;text-wrap:balance;max-width:24ch}
 .week .lede{color:var(--muted);max-width:62ch;margin:0}
-.stats{display:flex;flex-wrap:wrap;gap:10px 26px;margin:20px 0 26px;padding:0;list-style:none}
+.stats{display:flex;flex-wrap:wrap;gap:10px 26px;margin:28px 0 0;padding:0;list-style:none}
 .stats li{display:flex;align-items:baseline;gap:8px;color:var(--muted);font-size:.95rem}
 .stats b{font-family:var(--f-display);font-size:1.5rem;color:var(--ink);font-variant-numeric:tabular-nums}
 .sample-pill{display:inline-flex;align-items:center;gap:6px;font-family:var(--f-mono);font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;background:var(--surface);border:1px solid var(--line);color:var(--muted);padding:3px 10px;border-radius:999px;margin-left:10px;vertical-align:middle}
@@ -271,13 +271,13 @@ dialog[open]{animation:pop .3s cubic-bezier(.2,.8,.2,1)}
       <div class="eyebrow" id="weekRange">This week on Earth</div>
       <h1 id="weekTitle">What changed on Earth this week</h1>
       <p class="lede">Every Sunday, VaanAI's news agent reads the week's environment reporting from around the world and picks the five stories that matter most. Tap a story for the full summary.<span class="sample-pill" id="newsPill" hidden>Sample stories</span></p>
-      <ul class="stats" id="stats"></ul>
       <div class="slider" id="newsSlider" role="region" aria-roledescription="carousel" aria-label="Top 5 environment news stories this week">
         <ul class="slider-track" id="news" aria-live="polite"></ul>
         <button class="snav prev" id="newsPrev" type="button" aria-label="Previous story"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button>
         <button class="snav next" id="newsNext" type="button" aria-label="Next story"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg></button>
         <div class="dots" id="newsDots" role="group" aria-label="Choose a story"></div>
       </div>
+      <ul class="stats" id="stats"></ul>
     </div>
   </section>
 
