@@ -53,6 +53,13 @@ AOI_BBOX = None
 MEDIA_NEEDED = True  # set in main() from --media-needed; False = save the numbers only, no before/after images
 LOCATION_ID = None   # set in main() from --location-id; saved as water_insights.location_id
 
+# Quality gate: a result is only PUBLISHED if both pictures are mostly clear over
+# the water body. Above this share of cloud/missing pixels the measurement is not
+# trustworthy (a cloud-covered lake measures as "no water"), so nothing is saved.
+MAX_CLOUD_TO_PUBLISH_PCT = 20
+FOLDER_CLOUD: dict = {}   # scene folder -> % of the area hidden by cloud/snow/no-data
+_skip_reason = None       # set when a run ends without a result for an expected reason (no clear picture)
+
 # Month-vs-same-month-last-year comparison (set in main()). A run on, say,
 # 1 October compares the PREVIOUS calendar month with the same month a year earlier:
 #   "after"  = September this year  -> the LATEST clear scene in 1-30 Sep
@@ -151,7 +158,18 @@ TOOLS = [
                 "properties": {
                     "summary": {
                         "type": "string",
-                        "description": "2-4 plain-English sentences: finding, magnitude, likely driver.",
+                        "description": (
+                            "A plain-language write-up for the public, 130-200 words, in THREE short paragraphs "
+                            "separated by a blank line: (1) what changed — the water area on both dates in km², the "
+                            "change in km² and %, and the two dates in words (e.g. '27 September 2026'); "
+                            "(2) what it means for the people, farms and industries that rely on this water body "
+                            "(use the 'Used for' context given); (3) the most likely reasons (season, monsoon "
+                            "rainfall, releases from upstream dams, irrigation or drinking-water draw-down, silt, "
+                            "encroachment), worded as likely rather than certain, plus any caution in everyday words. "
+                            "Do NOT name satellites, sensors, data products or agencies (no Sentinel, Landsat, HLS, "
+                            "NASA, ESA) and avoid technical terms (no NDWI, index, pixels, bands, tiles, cloud mask); "
+                            "say 'satellite pictures' instead."
+                        ),
                     },
                     "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
                     "before_folder": {"type": "string", "description": "Folder path from the earlier (older-date) fetch_scene call."},
@@ -241,11 +259,42 @@ def _snap_to_window(args: dict):
 
 
 def _no_scene_message(source: str, args: dict) -> str:
+    global _skip_reason
     if WINDOWS:
+        _skip_reason = f"no usable picture exists for {args['start_date']}..{args['end_date']}"
         return (f"No usable {source} scene exists anywhere in {args['start_date']}..{args['end_date']}. "
                 "The comparison months are fixed and cannot be widened, so do NOT retry this period. "
                 "If you have a scene for the other period, stop and explain that no comparison is possible.")
     return f"No usable {source} scenes found for that range. Try a different or wider date range."
+
+
+_TECH_TERMS = [
+    (r"\b(?:the\s+)?(?:Copernicus\s+)?Sentinel[- ]?2[A-C]?(?:\s*L2A)?(?:\s*\(\s*\d+\s*m\s*\))?", "satellite"),
+    (r"\b(?:NASA\s+)?(?:HLS|Harmonized Landsat(?: and)? Sentinel(?:[- ]?2)?)(?:\s*\(\s*\d+\s*m\s*\))?", "satellite"),
+    (r"\bLandsat[- ]?\d*\b", "satellite"),
+    (r"\b(?:NASA|ESA|USGS)\b", ""),
+    (r"\b(?:NDWI|water[- ]index)[- ]based\s+", ""),
+    (r"\bNDWI\b|\bnormali[sz]ed difference water index\b", "satellite measurement"),
+    (r"\bcloud[- ]?mask(?:ed|ing)?\b", "cloud cover"),
+    (r"\bpixels?\b", "image points"),
+]
+
+
+def clean_summary(text: str) -> str:
+    """Safety net for the public write-up: removes satellite/product names and
+    jargon the model may still use, and tidies the leftovers."""
+    import re
+    for pattern, repl in _TECH_TERMS:
+        text = re.sub(pattern, repl, text, flags=re.IGNORECASE)
+    text = re.sub(r"\bsatellite(\s+satellite)+\b", "satellite", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bsatellite (imagery|images|scenes?|data)\b", "satellite pictures", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(satellite pictures)((?:,| and) satellite pictures)+\b", r"\1", text, flags=re.IGNORECASE)
+    # capitalise sentence starts that a replacement may have lower-cased
+    text = re.sub(r"(^|[.!?]\s+|\n\s*)([a-z])", lambda m: m.group(1) + m.group(2).upper(), text)
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r"\s+([,.;:])", r"\1", text)
+    text = re.sub(r"\(\s*\)", "", text)
+    return text.strip()
 
 
 def _days_from(day_iso: str, target_iso: str | None):
@@ -369,15 +418,21 @@ def tool_compute_water_extent(args: dict) -> dict:
             bad_pixel_mask=bad_mask, bbox=AOI_BBOX,
         )
         res = wc.band_resolution(green_files[0])   # 30 m (HLS) or 10 m (Sentinel-2)
+        FOLDER_CLOUD[folder] = round(bad_pct * 100, 1)
         result = {
             "water_area_km2": round(wc.water_area_km2(ndwi, pixel_area_m2=res * res), 3 if res < 30 else 2),
             "cloud_snow_masked_pct": round(bad_pct * 100, 1),
         }
-        if bad_pct > 0.10:
+        if bad_pct * 100 > MAX_CLOUD_TO_PUBLISH_PCT:
             result["warning"] = (
-                f"{bad_pct*100:.0f}% of this scene is cloud/snow-covered and was excluded from the "
-                "calculation. The remaining result may be unreliable — consider fetching a different, "
-                "clearer date instead of trusting this value if the percentage is high."
+                f"UNUSABLE: {bad_pct*100:.0f}% of the area is hidden by cloud, so this value is not a real "
+                f"measurement and a report using it will NOT be saved (limit {MAX_CLOUD_TO_PUBLISH_PCT}%). "
+                "Fetch a different day inside the same month that avoids this scene_date."
+            )
+        elif bad_pct > 0.10:
+            result["warning"] = (
+                f"{bad_pct*100:.0f}% of this scene is cloud-covered and was excluded. Usable, but a clearer "
+                "day in the same month would be better if one exists."
             )
         return result
     except ValueError as exc:
@@ -582,8 +637,25 @@ def persist_result(final_args: dict, location: str) -> None:
     )
 
 
+def _cloud_of(folder: str):
+    """% cloud over the area for a scene folder (measures it if not done yet)."""
+    if folder and folder not in FOLDER_CLOUD and os.path.isdir(folder):
+        tool_compute_water_extent({"folder": folder})
+    return FOLDER_CLOUD.get(folder)
+
+
 def _handle_finalize(tool_args: dict, location: str) -> None:
-    global _insight_saved
+    global _insight_saved, _skip_reason
+    # Quality gate — enforced in code, whatever the model decided.
+    for side in ("before", "after"):
+        cloud = _cloud_of(tool_args.get(f"{side}_folder"))
+        if cloud is None or cloud > MAX_CLOUD_TO_PUBLISH_PCT:
+            _skip_reason = (f"the {side} picture ({tool_args.get(f'{side}_date')}) was "
+                            f"{'unmeasured' if cloud is None else f'{cloud:.0f}% cloud-covered'} over the area "
+                            f"(limit {MAX_CLOUD_TO_PUBLISH_PCT}%) - not published, to avoid a false result")
+            log.warning("Not saving the result for %s: %s.", location, _skip_reason)
+            return
+    tool_args["summary"] = clean_summary(tool_args.get("summary", ""))
     print("\n=== FINAL REPORT ===")
     print(f"Confidence: {tool_args.get('confidence', 'unknown')}")
     print(tool_args.get("summary", ""))
@@ -659,12 +731,12 @@ def _force_finalize(messages: list, api_key: str, computed: dict, folder_dates: 
     # "after" would silently use a result that doesn't exist.
     # Skip scenes whose result came with a cloud/snow warning, so a rejected
     # cloudy scene can never be picked as "before" or "after".
-    candidates = {f: d for f, d in folder_dates.items() if f in computed and f not in rejected}
+    # Only clear scenes may be used — never fall back to cloudy ones (a cloud-covered
+    # lake measures as "no water" and produced a false 100% change once).
+    candidates = {f: d for f, d in folder_dates.items()
+                  if f in computed and (FOLDER_CLOUD.get(f) or 0) <= MAX_CLOUD_TO_PUBLISH_PCT}
     if len(candidates) < 2:
-        # Not enough clear scenes — fall back to every computed scene.
-        candidates = {f: d for f, d in folder_dates.items() if f in computed}
-        if len(candidates) < 2:
-            return False   # still not enough to compare, even with cloudy ones
+        return False
 
     ordered = sorted(candidates.items(), key=lambda kv: kv[1]["start_date"])
     before_folder, before_meta = ordered[0]
@@ -718,8 +790,11 @@ def _force_finalize(messages: list, api_key: str, computed: dict, folder_dates: 
     _handle_finalize(
         {
             "summary": (
-                f"Water surface area changed from {b:.2f} km² on {before_date} "
-                f"to {a:.2f} km² on {after_date} ({pct:+.1f}%)."
+                f"Satellite pictures show the water surface at {location} measured {b:.2f} km² on {before_date} "
+                f"and {a:.2f} km² on {after_date}, a change of {a - b:+.2f} km² ({pct:+.1f}%).\n\n"
+                "This compares the same month one year apart, so normal seasonal ups and downs are largely "
+                "taken out of the comparison. A detailed explanation of the likely causes could not be "
+                "generated for this reading."
             ),
             "confidence": "medium",
             "before_folder": before_folder, "after_folder": after_folder,
@@ -891,8 +966,21 @@ def main() -> None:
         eo.authenticate()  # NASA login is only needed for HLS; Sentinel-2 is open, no login
 
     min_lon, min_lat, max_lon, max_lat = args.bbox
+    # Local context for the public write-up (who depends on this water body).
+    context = ""
+    if args.location_id is not None:
+        try:
+            loc = storage.get_location(args.location_id) or {}
+            where = ", ".join(x for x in (loc.get("place"), loc.get("district"), loc.get("state"), loc.get("country")) if x)
+            context = (f"Where: {where}\n" if where else "") \
+                + (f"Type of water body: {loc['type']}\n" if loc.get("type") else "") \
+                + (f"Used for: {loc['uses']}\n" if loc.get("uses") else "")
+        except Exception as exc:  # noqa: BLE001 - context is nice to have, never fatal
+            log.warning("Could not read location details: %s", storage.short_error(exc))
+
     goal_prompt = (
         f"Location: {args.location}\n"
+        f"{context}"
         f"Bounding box: min_lon={min_lon}, min_lat={min_lat}, max_lon={max_lon}, max_lat={max_lat}\n\n"
         f"Task: {args.goal}\n\n"
     )
@@ -941,6 +1029,11 @@ def main() -> None:
     # crashed (e.g. hit MAX_TURNS, a tool code error, or Supabase rejected the
     # save). Exiting non-zero makes GitHub Actions mark the run red and send the
     # failure email — otherwise these runs would silently show a green tick.
+    if not _insight_saved and _skip_reason:
+        message = f"Skipped {args.location}: {_skip_reason}."
+        print(f"::warning::{message}")   # yellow note on the run summary; the job stays green
+        log.warning(message)
+        return
     if not _insight_saved:
         message = f"No insight was saved for {args.location} — see the log above for the reason."
         print(f"::error::{message}")  # shows as a red annotation on the GitHub run summary
