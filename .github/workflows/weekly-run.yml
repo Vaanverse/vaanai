@@ -1,17 +1,28 @@
-name: Monthly VaanAI Water Insight Run
+name: Daily VaanAI Water Insight Run
 
 # The list of places to analyse lives in the Supabase table
 # `monitored_locations_water` (only rows with active = true are run).
 # Add, remove or pause a location there — no change to this file needed.
+#
+# Each day runs only the NEXT 10 water bodies (ascending id), tracked by the
+# run_index column: one full pass over 100 water bodies takes 10 days, and each
+# pass ("cycle") goes one year further back — 5 cycles = 5 years per water body.
+# See list_monitored_locations.py and sql/2026-10-12_run_index.sql.
+#
+# Note: a manual "Run workflow" click also takes (and marks) the next 10.
 
 on:
   schedule:
-    - cron: '0 6 1 * *'     # 1st day of every month, 06:00 UTC (11:30 AM IST);
-                            # compares the month that just ended with the same month last year
+    - cron: '30 18 * * *'   # every day, 18:30 UTC = 00:00 (midnight) IST
+                            # (GitHub may start scheduled runs a few minutes late)
   workflow_dispatch:        # lets you trigger it manually from the Actions tab too
 
+concurrency:
+  group: water-insight-run  # never two runs at once, so they can't pick overlapping batches
+  cancel-in-progress: false
+
 jobs:
-  # Job 1: read the active locations from Supabase and turn them into a job list.
+  # Job 1: pick today's batch of 10 from Supabase (and mark its run_index).
   plan:
     # Only ever run on main. Scheduled runs already use main (the default
     # branch); this also blocks manual "Run workflow" clicks from dev or any
@@ -27,9 +38,9 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install "supabase>=2.0.0" "python-dotenv>=1.0.0"   # only what the list script needs
-      - name: Read active locations from monitored_locations_water
+      - name: Pick today's batch from monitored_locations_water
         id: list
-        run: python list_monitored_locations.py
+        run: python list_monitored_locations.py --claim
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
@@ -37,7 +48,7 @@ jobs:
   # Job 2: run the agent once per location.
   run-agent:
     needs: plan
-    if: needs.plan.outputs.count != '0'   # nothing active -> nothing to run
+    if: needs.plan.outputs.count != '0'   # nothing to run (all cycles done) -> skip
     # Pinned (not ubuntu-latest) so GitHub's switch of "latest" to Ubuntu 26
     # on 19 Oct 2026 can't change the environment under us unannounced.
     runs-on: ubuntu-24.04
@@ -48,7 +59,7 @@ jobs:
                             # free-tier rate limit at the same moment
       matrix:
         location: ${{ fromJSON(needs.plan.outputs.locations) }}
-    name: "#${{ matrix.location.id }} ${{ matrix.location.name }}"
+    name: "#${{ matrix.location.id }} ${{ matrix.location.name }} (cycle ${{ matrix.location.run_index }})"
     steps:
       - uses: actions/checkout@v5        # v5+ runs on Node 24 (v4 used deprecated Node 20)
       - uses: actions/setup-python@v6    # v6+ runs on Node 24 (v5 used deprecated Node 20)
@@ -63,14 +74,16 @@ jobs:
           python agentic_water_monitor_groq.py \
             --location "$LOC_NAME" \
             --location-id "$LOC_ID" \
+            --run-index "$LOC_RUN_INDEX" \
             --bbox $LOC_BBOX \
             --source "$LOC_SENSOR" \
             --media-needed "$LOC_MEDIA" \
-            --goal "Compare the water extent of the previous month with the same month one year earlier for this location, using the latest clear scene of each month. Avoid cloudy or snow-covered scenes. Decide if the change is significant and explain a likely driver." \
+            --goal "Compare the water extent of this location in the two months given below (the same month, one year apart), using the clear scene of each month closest to its target date. Avoid cloudy or snow-covered scenes. Decide if the change is significant and explain a likely driver." \
             --model "openai/gpt-oss-120b"
         env:
           LOC_NAME: ${{ matrix.location.name }}
           LOC_ID: ${{ matrix.location.id }}
+          LOC_RUN_INDEX: ${{ matrix.location.run_index }}
           LOC_BBOX: ${{ matrix.location.bbox }}
           LOC_SENSOR: ${{ matrix.location.sensor }}
           LOC_MEDIA: ${{ matrix.location.media_needed }}

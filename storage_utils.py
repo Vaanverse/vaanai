@@ -261,6 +261,24 @@ def save_insight(record: dict) -> None:
              record["before_date"], record["after_date"])
 
 
+def get_cycle_insights(location_id: int) -> list[dict]:
+    """All water_insights rows of one location that belong to a numbered cycle
+    (run_index is set), newest cycle first. The water agent uses them to work out
+    which year to compare next: cycle N continues from the before_date of cycle N-1."""
+    client = get_supabase_client()
+
+    def _read():
+        return (client.table("water_insights")
+                .select("id, run_index, before_date, after_date, created_at")
+                .eq("location_id", location_id)
+                .not_.is_("run_index", "null")
+                .order("run_index", desc=True)
+                .order("created_at", desc=True)
+                .execute())
+
+    return with_retries("Reading earlier cycles", _read).data or []
+
+
 def mark_location_run(location_id: int) -> None:
     """Sets last_run_at = now (UTC) on one row of `monitored_locations_water`,
     so the table shows when each location was last analysed. Called by the

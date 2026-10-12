@@ -52,6 +52,7 @@ MODEL = "openai/gpt-oss-20b"  # confirmed available on this account; use --model
 AOI_BBOX = None
 MEDIA_NEEDED = True  # set in main() from --media-needed; False = save the numbers only, no before/after images
 LOCATION_ID = None   # set in main() from --location-id; saved as water_insights.location_id
+RUN_INDEX = None     # set in main() from --run-index; saved as water_insights.run_index (which yearly cycle this is)
 
 # Quality gate: a result is only PUBLISHED if both pictures are mostly clear over
 # the water body. Above this share of cloud/missing pixels the measurement is not
@@ -60,14 +61,21 @@ MAX_CLOUD_TO_PUBLISH_PCT = 20
 FOLDER_CLOUD: dict = {}   # scene folder -> % of the area hidden by cloud/snow/no-data
 _skip_reason = None       # set when a run ends without a result for an expected reason (no clear picture)
 
-# Month-vs-same-month-last-year comparison (set in main()). A run on, say,
-# 1 October compares the PREVIOUS calendar month with the same month a year earlier:
+# Month-vs-same-month-a-year-earlier comparison (set in main()).
+#
+# Cycle 1 (run_index 1, or no --run-index): the PREVIOUS calendar month of the
+# run date is compared with the same month a year earlier, e.g. a run in October:
 #   "after"  = September this year  -> the LATEST clear scene in 1-30 Sep
 #   "before" = September last year  -> the LATEST clear scene in 1-30 Sep last year
 # "Latest" = closest to the month's last day. Satellites don't image a place every
 # day (Sentinel-2 ~5 days, HLS ~2-3 days) and clouds hide some days, so the scene
-# picked is the last CLEAR one in the month. fetch_scene only accepts date ranges
-# inside these two months.
+# picked is the last CLEAR one in the month.
+#
+# Cycle N > 1 steps one more year back: the before_date saved by cycle N-1 for the
+# same location becomes this run's "after" target date, and "before" is the same
+# date one year earlier. 5 cycles -> 5 yearly comparisons per water body.
+#
+# fetch_scene only accepts date ranges inside these two months.
 WINDOWS: dict = {}   # {"after": (start, end, target), "before": (start, end, target)} as date objects
 
 # Data source: NASA HLS (30 m) for large areas, Sentinel-2 L2A (10 m) for small
@@ -229,6 +237,49 @@ def set_comparison_windows(run_date: date) -> None:
     ly_start, ly_end = month_bounds(y - 1, m)
     WINDOWS["after"] = (start, end, end)
     WINDOWS["before"] = (ly_start, ly_end, ly_end)
+
+
+def years_before(day: date, years: int) -> date:
+    """Same calendar date `years` earlier (29 Feb -> 28 Feb in a non-leap year)."""
+    try:
+        return day.replace(year=day.year - years)
+    except ValueError:
+        return day.replace(year=day.year - years, day=28)
+
+
+def set_cycle_windows(after_target: date) -> None:
+    """Cycle 2+: "after" = the month containing after_target, aiming for that exact
+    day; "before" = the same date one year earlier, within its month."""
+    before_target = years_before(after_target, 1)
+    a_start, a_end = month_bounds(after_target.year, after_target.month)
+    b_start, b_end = month_bounds(before_target.year, before_target.month)
+    WINDOWS["after"] = (a_start, a_end, after_target)
+    WINDOWS["before"] = (b_start, b_end, before_target)
+
+
+def cycle_after_target(location_id: int | None, run_index: int, run_date: date) -> tuple[date, str]:
+    """Works out the "after" date for cycle `run_index` of one location.
+
+    Normally: the before_date saved by cycle run_index-1. If that row is missing
+    (e.g. the earlier run was skipped because of cloud), it steps back from the
+    newest earlier cycle that does exist, one year per missing cycle. With no
+    earlier cycle at all, it counts back from cycle 1's month (the month before
+    the run date)."""
+    if location_id is not None:
+        try:
+            for row in storage.get_cycle_insights(location_id):   # newest cycle first
+                k = row.get("run_index")
+                if k is None or k >= run_index or not row.get("before_date"):
+                    continue
+                prev_before = datetime.strptime(str(row["before_date"])[:10], "%Y-%m-%d").date()
+                return (years_before(prev_before, run_index - 1 - k),
+                        f"cycle {k} before_date {prev_before}"
+                        + ("" if k == run_index - 1 else f", stepped back {run_index - 1 - k} more year(s)"))
+        except Exception as exc:  # noqa: BLE001 - fall back to the calculated date below
+            log.warning("Could not read earlier cycles: %s", storage.short_error(exc))
+    month_end = run_date.replace(day=1) - timedelta(days=1)
+    return (years_before(month_end, run_index - 1),
+            f"no earlier cycle found - counted back {run_index - 1} year(s) from {month_end:%B %Y}")
 
 
 def _snap_to_window(args: dict):
@@ -619,22 +670,23 @@ def persist_result(final_args: dict, location: str) -> None:
         )
         confidence = "low"
 
-    storage.save_insight(
-        {
-            "location": location,
-            "before_date": final_args["before_date"],
-            "after_date": final_args["after_date"],
-            "before_value": before_value,
-            "after_value": after_value,
-            "change_pct": round(change_pct, 2),
-            "summary": final_args["summary"],
-            "confidence": confidence,
-            "before_image_url": before_url,
-            "after_image_url": after_url,
-            # link to monitored_locations_water.id (None for manual runs without --location-id)
-            "location_id": LOCATION_ID,
-        }
-    )
+    record = {
+        "location": location,
+        "before_date": final_args["before_date"],
+        "after_date": final_args["after_date"],
+        "before_value": before_value,
+        "after_value": after_value,
+        "change_pct": round(change_pct, 2),
+        "summary": final_args["summary"],
+        "confidence": confidence,
+        "before_image_url": before_url,
+        "after_image_url": after_url,
+        # link to monitored_locations_water.id (None for manual runs without --location-id)
+        "location_id": LOCATION_ID,
+    }
+    if RUN_INDEX is not None:
+        record["run_index"] = RUN_INDEX   # which yearly cycle this result belongs to
+    storage.save_insight(record)
 
 
 def _cloud_of(folder: str):
@@ -926,13 +978,19 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--run-date", default=None, metavar="YYYY-MM-DD",
-        help="Pretend the run happens on this date (default: today, UTC). The PREVIOUS month of this "
-             "date is compared with the same month a year earlier, e.g. 2026-10-01 -> Sep 2026 vs Sep 2025. "
+        help="Pretend the run happens on this date (default: today, UTC). In cycle 1 the PREVIOUS month of "
+             "this date is compared with the same month a year earlier, e.g. 2026-10-12 -> Sep 2026 vs Sep 2025. "
              "Use 'none' to let the model choose its own dates (old behaviour).",
     )
     parser.add_argument(
         "--location-id", type=int, default=None,
         help="id of the row in monitored_locations_water; when given, its last_run_at is updated after the run.",
+    )
+    parser.add_argument(
+        "--run-index", type=int, default=None,
+        help="Yearly cycle number from monitored_locations_water.run_index (1-5). 1 = previous month vs "
+             "a year earlier; N > 1 = continues one year further back from cycle N-1's before_date "
+             "(needs --location-id). Saved as water_insights.run_index.",
     )
     return parser.parse_args()
 
@@ -944,7 +1002,7 @@ def bbox_area_km2(bbox) -> float:
 
 
 def main() -> None:
-    global MODEL, AOI_BBOX, DATA_SOURCE, DATA_RES, MEDIA_NEEDED, LOCATION_ID
+    global MODEL, AOI_BBOX, DATA_SOURCE, DATA_RES, MEDIA_NEEDED, LOCATION_ID, RUN_INDEX
     load_dotenv()
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -956,6 +1014,10 @@ def main() -> None:
     AOI_BBOX = tuple(args.bbox)
     MEDIA_NEEDED = args.media_needed == "true"
     LOCATION_ID = args.location_id
+    RUN_INDEX = args.run_index
+    if RUN_INDEX is not None and RUN_INDEX < 1:
+        log.error("--run-index must be 1 or more (got %s).", RUN_INDEX)
+        sys.exit(1)
 
     area = bbox_area_km2(AOI_BBOX)
     DATA_SOURCE = args.source if args.source != "auto" else ("s2" if area < SMALL_AOI_KM2 else "hls")
@@ -988,20 +1050,25 @@ def main() -> None:
     if (args.run_date or "").lower() != "none":
         run_date = (datetime.strptime(args.run_date, "%Y-%m-%d").date() if args.run_date
                     else datetime.now(timezone.utc).date())
-        set_comparison_windows(run_date)
+        if RUN_INDEX is not None and RUN_INDEX > 1:
+            after_target, why = cycle_after_target(LOCATION_ID, RUN_INDEX, run_date)
+            set_cycle_windows(after_target)
+            log.info("Cycle %d: after target %s (%s).", RUN_INDEX, after_target, why)
+        else:
+            set_comparison_windows(run_date)
         a, b = WINDOWS["after"], WINDOWS["before"]
-        month = a[0].strftime("%B")
-        log.info("Run date %s -> comparing %s %d (%s..%s) with %s %d (%s..%s), latest clear scene of each.",
-                 run_date, month, a[0].year, a[0], a[1], month, b[0].year, b[0], b[1])
+        a_label, b_label = a[0].strftime("%B %Y"), b[0].strftime("%B %Y")
+        log.info("Run date %s, cycle %s -> comparing %s (%s..%s, target %s) with %s (%s..%s, target %s).",
+                 run_date, RUN_INDEX or 1, a_label, a[0], a[1], a[2], b_label, b[0], b[1], b[2])
         goal_prompt += (
-            f"COMPARISON PERIOD IS FIXED — compare {month} {a[0].year} with {month} {b[0].year}, "
-            "using the LATEST clear scene of each month:\n"
-            f"- AFTER ({month} {a[0].year}): call fetch_scene with start_date={a[0]}, end_date={a[1]}.\n"
-            f"- BEFORE ({month} {b[0].year}): call fetch_scene with start_date={b[0]}, end_date={b[1]}.\n"
-            "fetch_scene automatically picks the clear day closest to the end of the month and reports "
+            f"COMPARISON PERIOD IS FIXED — compare {a_label} with {b_label}, using the clear scene "
+            "of each month closest to its target date:\n"
+            f"- AFTER ({a_label}): call fetch_scene with start_date={a[0]}, end_date={a[1]} (target {a[2]}).\n"
+            f"- BEFORE ({b_label}): call fetch_scene with start_date={b[0]}, end_date={b[1]} (target {b[2]}).\n"
+            "fetch_scene automatically picks the clear day closest to the target date and reports "
             "days_from_target. If a scene turns out too cloudy, fetch again with a narrower range "
-            "INSIDE the same month that ends before that scene_date. Ranges outside these two months "
-            "are rejected. Mention both scene dates and the month compared in your summary.\n\n"
+            "INSIDE the same month that leaves out that scene_date. Ranges outside these two months "
+            "are rejected. Mention both scene dates and the months compared in your summary.\n\n"
             "Fetch both scenes, compute water extent for each, and only call finalize_report once "
             "confident in a conclusion."
         )
