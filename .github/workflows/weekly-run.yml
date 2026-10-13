@@ -87,8 +87,36 @@ jobs:
           LOC_BBOX: ${{ matrix.location.bbox }}
           LOC_SENSOR: ${{ matrix.location.sensor }}
           LOC_MEDIA: ${{ matrix.location.media_needed }}
+          USAGE_FILE: usage-${{ matrix.location.id }}.json   # Groq token usage of this job, for the summary below
           EARTHDATA_USERNAME: ${{ secrets.EARTHDATA_USERNAME }}
           EARTHDATA_PASSWORD: ${{ secrets.EARTHDATA_PASSWORD }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      - name: Keep the Groq usage of this job
+        if: always()                     # also when the agent failed or skipped
+        uses: actions/upload-artifact@v4
+        with:
+          name: usage-${{ matrix.location.id }}
+          path: usage-${{ matrix.location.id }}.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # Job 3: add up the Groq token usage of all water bodies in tonight's run.
+  # The table appears on the run's Summary page in GitHub Actions.
+  usage-summary:
+    needs: run-agent
+    if: always() && needs.run-agent.result != 'skipped'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: usage-*
+          path: usage
+          merge-multiple: true
+      - name: Groq token usage for this run
+        run: python usage_report.py usage
