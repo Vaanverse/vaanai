@@ -52,7 +52,7 @@ jobs:
     # Pinned (not ubuntu-latest) so GitHub's switch of "latest" to Ubuntu 26
     # on 19 Oct 2026 can't change the environment under us unannounced.
     runs-on: ubuntu-24.04
-    timeout-minutes: 60     # one stuck location can't block the queue for 6 hours
+    timeout-minutes: 120    # up to 3 tries (planned month + 2 earlier ones); one stuck location still can't block the queue for 6 hours
     strategy:
       fail-fast: false      # one location failing shouldn't cancel the others
       max-parallel: 1       # run locations one after another, so they don't share Groq's

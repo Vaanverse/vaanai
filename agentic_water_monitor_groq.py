@@ -51,6 +51,7 @@ GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 MODEL = "openai/gpt-oss-20b"  # confirmed available on this account; use --model to try openai/gpt-oss-120b for higher quality
 AOI_BBOX = None
 MEDIA_NEEDED = True  # set in main() from --media-needed; False = save the numbers only, no before/after images
+IST = timezone(timedelta(hours=5, minutes=30))   # India Standard Time; the daily run starts at 00:00 IST
 LOCATION_ID = None   # set in main() from --location-id; saved as water_insights.location_id
 RUN_INDEX = None     # set in main() from --run-index; saved as water_insights.run_index (which yearly cycle this is)
 
@@ -282,6 +283,51 @@ def cycle_after_target(location_id: int | None, run_index: int, run_date: date) 
             f"no earlier cycle found - counted back {run_index - 1} year(s) from {month_end:%B %Y}")
 
 
+MAX_MONTH_SHIFTS = 2   # no clear picture in the month -> try up to 2 months earlier (same month in both years)
+
+
+def months_before(day: date, months: int) -> date:
+    """Same day `months` earlier; a month-end date stays a month-end date
+    (30 Sep -> 31 Aug), other days are capped at the shorter month's end."""
+    y, m = divmod(day.year * 12 + day.month - 1 - months, 12)
+    m += 1
+    last = calendar.monthrange(y, m)[1]
+    is_month_end = day.day == calendar.monthrange(day.year, day.month)[1]
+    return date(y, m, last if is_month_end else min(day.day, last))
+
+
+def apply_month_shift(base_windows: dict, shift: int) -> None:
+    """Moves both comparison months `shift` months earlier than base_windows."""
+    for side, (_, _, target) in base_windows.items():
+        t = months_before(target, shift)
+        start, end = month_bounds(t.year, t.month)
+        WINDOWS[side] = (start, end, t)
+
+
+def period_instructions(run_date: date, shift: int) -> str:
+    """The fixed-period part of the prompt, for the current WINDOWS."""
+    a, b = WINDOWS["after"], WINDOWS["before"]
+    a_label, b_label = a[0].strftime("%B %Y"), b[0].strftime("%B %Y")
+    log.info("Run date %s, cycle %s -> comparing %s (%s..%s, target %s) with %s (%s..%s, target %s).",
+             run_date, RUN_INDEX or 1, a_label, a[0], a[1], a[2], b_label, b[0], b[1], b[2])
+    note = ("" if not shift else
+            f"(The planned month had no clear satellite picture, so this comparison uses {a[0]:%B}, "
+            f"{shift} month(s) earlier. Mention this in the summary.)\n")
+    return (
+        f"COMPARISON PERIOD IS FIXED — compare {a_label} with {b_label}, using the clear scene "
+        "of each month closest to its target date:\n"
+        f"- AFTER ({a_label}): call fetch_scene with start_date={a[0]}, end_date={a[1]} (target {a[2]}).\n"
+        f"- BEFORE ({b_label}): call fetch_scene with start_date={b[0]}, end_date={b[1]} (target {b[2]}).\n"
+        f"{note}"
+        "fetch_scene automatically picks the clear day closest to the target date and reports "
+        "days_from_target. If a scene turns out too cloudy, fetch again with a narrower range "
+        "INSIDE the same month that leaves out that scene_date. Ranges outside these two months "
+        "are rejected. Mention both scene dates and the months compared in your summary.\n\n"
+        "Fetch both scenes, compute water extent for each, and only call finalize_report once "
+        "confident in a conclusion."
+    )
+
+
 def _snap_to_window(args: dict):
     """Keeps a fetch_scene request inside one of the two comparison windows.
     Returns (start_iso, end_iso, target_iso) or an {"error": ...} dict."""
@@ -311,12 +357,27 @@ def _snap_to_window(args: dict):
 
 def _no_scene_message(source: str, args: dict) -> str:
     global _skip_reason
-    if WINDOWS:
-        _skip_reason = f"no usable picture exists for {args['start_date']}..{args['end_date']}"
-        return (f"No usable {source} scene exists anywhere in {args['start_date']}..{args['end_date']}. "
-                "The comparison months are fixed and cannot be widened, so do NOT retry this period. "
-                "If you have a scene for the other period, stop and explain that no comparison is possible.")
-    return f"No usable {source} scenes found for that range. Try a different or wider date range."
+    if not WINDOWS:
+        return f"No usable {source} scenes found for that range. Try a different or wider date range."
+    start = datetime.strptime(args["start_date"], "%Y-%m-%d").date()
+    end = datetime.strptime(args["end_date"], "%Y-%m-%d").date()
+    w_start, w_end, _ = next((w for w in WINDOWS.values() if w[0] <= start and end <= w[1]),
+                             (start, end, None))
+    _skip_reason = f"no clear picture found in {w_start:%B %Y}"
+    if (start, end) == (w_start, w_end):
+        return (f"No usable {source} scene exists anywhere in {start:%B %Y}. Do NOT retry this month. "
+                "Stop now and explain that no comparison is possible for this month - the system will "
+                "automatically try an earlier month.")
+    rest = []
+    if start > w_start:
+        rest.append(f"{w_start}..{start - timedelta(days=1)}")
+    if end < w_end:
+        rest.append(f"{end + timedelta(days=1)}..{w_end}")
+    return (f"No usable {source} scene in {start}..{end}, which is only PART of {w_start:%B %Y}. "
+            f"The rest of the month ({' and '.join(rest)}) may still have a clear day: if you have not "
+            "searched that part yet, fetch it (leave out scene dates already found too cloudy). If the "
+            "whole month has now been searched without a clear picture, stop and explain that no "
+            "comparison is possible for this month - the system will automatically try an earlier month.")
 
 
 _TECH_TERMS = [
@@ -364,7 +425,7 @@ def _fetch_scene_s2(args: dict, target: str | None = None) -> dict:
         best = s2.best_scene(bbox, args["start_date"], args["end_date"],
                              max_candidates=12 if target else 6, target_date=target)
         if best is None:
-            return {"error": _no_scene_message("Sentinel-2", args)}
+            return {"no_scene": "Sentinel-2"}
         day, items, bad, covered = best
         folder = tempfile.mkdtemp(prefix="vaanai_scene_")
         _created_folders.append(folder)
@@ -383,13 +444,43 @@ def _fetch_scene_s2(args: dict, target: str | None = None) -> dict:
         return {"error": str(exc) or repr(exc) or "Unknown error during Sentinel-2 fetch (see logs above)."}
 
 
+def _window_for(start_iso: str, end_iso: str):
+    """The comparison window (month) a snapped date range lies in, as (start, end) ISO strings."""
+    for w_start, w_end, _ in WINDOWS.values():
+        if w_start.isoformat() <= start_iso and end_iso <= w_end.isoformat():
+            return w_start.isoformat(), w_end.isoformat()
+    return None
+
+
 def tool_fetch_scene(args: dict) -> dict:
     snapped = _snap_to_window(args)
     if isinstance(snapped, dict):
         return snapped   # error: range outside both comparison windows
     start_date, end_date, target = snapped
     args = {**args, "start_date": start_date, "end_date": end_date}
+    result = _fetch_scene_once(args, target)
 
+    # The model often asks for only part of the month (e.g. 15-30 Sep). If that
+    # part has no clear picture, search the WHOLE month before giving up -
+    # otherwise a clear day earlier in the month is never looked at.
+    window = _window_for(start_date, end_date) if WINDOWS else None
+    if "no_scene" in result and window and window != (start_date, end_date):
+        log.info("No usable scene in %s..%s - searching the whole month %s..%s instead.",
+                 start_date, end_date, *window)
+        args = {**args, "start_date": window[0], "end_date": window[1]}
+        result = _fetch_scene_once(args, target)
+        if "folder" in result:
+            result["note"] = (f"Nothing usable in {start_date}..{end_date}, so the whole month "
+                              f"{window[0]}..{window[1]} was searched and this scene was found.")
+
+    if "no_scene" in result:
+        return {"error": _no_scene_message(result["no_scene"], args)}
+    return result
+
+
+def _fetch_scene_once(args: dict, target: str | None) -> dict:
+    """One search + download for an already-snapped date range. Returns the scene,
+    {"no_scene": <source>} when nothing usable exists in the range, or {"error": ...}."""
     if DATA_SOURCE == "s2":
         return _fetch_scene_s2(args, target)
     bbox = (args["min_lon"], args["min_lat"], args["max_lon"], args["max_lat"])
@@ -412,7 +503,7 @@ def tool_fetch_scene(args: dict) -> dict:
                              args["start_date"], args["end_date"], max_cloud)
                 break
         if not granules:
-            return {"error": _no_scene_message("HLS", args)}
+            return {"no_scene": "HLS"}
 
         # The bbox can span several tiles. Group tiles by the day they were
         # captured, then pick the day whose tiles together cover the bbox best,
@@ -511,6 +602,7 @@ def cleanup_temp_folders() -> None:
     for folder in _created_folders:
         shutil.rmtree(folder, ignore_errors=True)
     log.info("Cleaned up %d temp folder(s).", len(_created_folders))
+    _created_folders.clear()
 
 
 VALID_TOOL_NAMES = {"fetch_scene", "compute_water_extent", "finalize_report"}
@@ -858,6 +950,14 @@ def _force_finalize(messages: list, api_key: str, computed: dict, folder_dates: 
     return True
 
 
+def _note_cloudy_only() -> None:
+    """Ending without a result after finding only cloud-covered pictures counts
+    as "no clear picture" (so main() tries an earlier month), not as an error."""
+    global _skip_reason
+    if not _skip_reason and any(c > MAX_CLOUD_TO_PUBLISH_PCT for c in FOLDER_CLOUD.values()):
+        _skip_reason = "only cloud-covered pictures were found"
+
+
 def run_agent(goal: str, api_key: str, location: str) -> None:
     messages = [
         {
@@ -904,6 +1004,7 @@ def run_agent(goal: str, api_key: str, location: str) -> None:
                 return
             if _force_finalize(messages, api_key, computed, folder_dates, location, rejected):
                 return
+            _note_cloudy_only()
             log.info("Model stopped, and fewer than two scenes were measured — nothing to compare; ending.")
             return
 
@@ -955,6 +1056,7 @@ def run_agent(goal: str, api_key: str, location: str) -> None:
     _compute_missing(folder_dates, computed, rejected)
     if _force_finalize(messages, api_key, computed, folder_dates, location, rejected):
         return
+    _note_cloudy_only()
     log.warning("Hit MAX_TURNS (%d) without a final report. Ending.", MAX_TURNS)
 
 
@@ -978,7 +1080,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--run-date", default=None, metavar="YYYY-MM-DD",
-        help="Pretend the run happens on this date (default: today, UTC). In cycle 1 the PREVIOUS month of "
+        help="Pretend the run happens on this date (default: today in India time, IST). In cycle 1 the PREVIOUS month of "
              "this date is compared with the same month a year earlier, e.g. 2026-10-12 -> Sep 2026 vs Sep 2025. "
              "Use 'none' to let the model choose its own dates (old behaviour).",
     )
@@ -1047,40 +1149,44 @@ def main() -> None:
         f"Task: {args.goal}\n\n"
     )
 
-    if (args.run_date or "").lower() != "none":
+    fixed_dates = (args.run_date or "").lower() != "none"
+    if fixed_dates:
         run_date = (datetime.strptime(args.run_date, "%Y-%m-%d").date() if args.run_date
-                    else datetime.now(timezone.utc).date())
+                    # IST, not UTC: the workflow starts at 00:00 IST, which is still the
+                    # previous day in UTC (on the 1st that would pick the wrong month).
+                    else datetime.now(IST).date())
         if RUN_INDEX is not None and RUN_INDEX > 1:
             after_target, why = cycle_after_target(LOCATION_ID, RUN_INDEX, run_date)
             set_cycle_windows(after_target)
             log.info("Cycle %d: after target %s (%s).", RUN_INDEX, after_target, why)
         else:
             set_comparison_windows(run_date)
-        a, b = WINDOWS["after"], WINDOWS["before"]
-        a_label, b_label = a[0].strftime("%B %Y"), b[0].strftime("%B %Y")
-        log.info("Run date %s, cycle %s -> comparing %s (%s..%s, target %s) with %s (%s..%s, target %s).",
-                 run_date, RUN_INDEX or 1, a_label, a[0], a[1], a[2], b_label, b[0], b[1], b[2])
-        goal_prompt += (
-            f"COMPARISON PERIOD IS FIXED — compare {a_label} with {b_label}, using the clear scene "
-            "of each month closest to its target date:\n"
-            f"- AFTER ({a_label}): call fetch_scene with start_date={a[0]}, end_date={a[1]} (target {a[2]}).\n"
-            f"- BEFORE ({b_label}): call fetch_scene with start_date={b[0]}, end_date={b[1]} (target {b[2]}).\n"
-            "fetch_scene automatically picks the clear day closest to the target date and reports "
-            "days_from_target. If a scene turns out too cloudy, fetch again with a narrower range "
-            "INSIDE the same month that leaves out that scene_date. Ranges outside these two months "
-            "are rejected. Mention both scene dates and the months compared in your summary.\n\n"
-            "Fetch both scenes, compute water extent for each, and only call finalize_report once "
-            "confident in a conclusion."
-        )
-    else:
-        goal_prompt += (
-            "You have tools to fetch satellite scenes for date ranges you choose and to compute "
-            "water extent from them. Decide which date ranges to compare, fetch what you need, "
-            "compute the numbers, and only call finalize_report once confident in a conclusion."
-        )
+        base_windows = dict(WINDOWS)
 
+    global _skip_reason
     try:
-        run_agent(goal_prompt, api_key, location=args.location)
+        # With fixed dates: if a month has no clear picture (cloud, monsoon), try
+        # again with BOTH dates moved back one month - same month in both years,
+        # so the seasons still match - up to MAX_MONTH_SHIFTS times.
+        for shift in range(MAX_MONTH_SHIFTS + 1 if fixed_dates else 1):
+            prompt = goal_prompt
+            if fixed_dates:
+                apply_month_shift(base_windows, shift)
+                if shift:
+                    log.warning("Attempt %d: %s - trying one month earlier.", shift + 1, _skip_reason)
+                    cleanup_temp_folders()   # free the disk before downloading again
+                    FOLDER_CLOUD.clear()
+                    _skip_reason = None
+                prompt += period_instructions(run_date, shift)
+            else:
+                prompt += (
+                    "You have tools to fetch satellite scenes for date ranges you choose and to compute "
+                    "water extent from them. Decide which date ranges to compare, fetch what you need, "
+                    "compute the numbers, and only call finalize_report once confident in a conclusion."
+                )
+            run_agent(prompt, api_key, location=args.location)
+            if _insight_saved or not _skip_reason:
+                break   # saved, or failed for a reason an earlier month won't fix
     finally:
         cleanup_temp_folders()
         if args.location_id is not None:
