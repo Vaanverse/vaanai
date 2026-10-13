@@ -655,6 +655,80 @@ def _try_recover_corrupted_tool_call(response) -> dict | None:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Groq token usage. Every model reply carries a "usage" block; it is recorded
+# per call so each run can print what it used (per call, per minute, total) and
+# save it to USAGE_FILE for the workflow's end-of-night summary (usage_report.py).
+# Calls Groq rejected (rate limited, or broken output it could not parse) carry
+# no usage block, so they are only counted, not measured.
+# ---------------------------------------------------------------------------
+USAGE_CALLS: list[dict] = []   # one entry per successful model call
+USAGE_FAILED_CALLS = 0         # rejected calls (429 / unparseable output)
+USAGE_LIMITS: dict = {}        # latest x-ratelimit-* headers from Groq
+
+
+def _record_usage(response) -> None:
+    global USAGE_LIMITS
+    usage = (response.json() or {}).get("usage") or {}
+    USAGE_CALLS.append({
+        "time": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "prompt_tokens": int(usage.get("prompt_tokens") or 0),
+        "completion_tokens": int(usage.get("completion_tokens") or 0),
+        "total_tokens": int(usage.get("total_tokens") or 0),
+    })
+    USAGE_LIMITS = {k.lower(): v for k, v in response.headers.items() if k.lower().startswith("x-ratelimit")}
+    c = USAGE_CALLS[-1]
+    log.info("Groq call %d: %d tokens (%d in, %d out). Left this minute: %s tokens; left today: %s requests.",
+             len(USAGE_CALLS), c["total_tokens"], c["prompt_tokens"], c["completion_tokens"],
+             USAGE_LIMITS.get("x-ratelimit-remaining-tokens", "?"),
+             USAGE_LIMITS.get("x-ratelimit-remaining-requests", "?"))
+
+
+def per_minute(calls: list[dict]) -> dict:
+    """{"HH:MM" (UTC): tokens} for the given calls."""
+    out: dict = {}
+    for c in calls:
+        minute = c["time"][11:16]
+        out[minute] = out.get(minute, 0) + c["total_tokens"]
+    return out
+
+
+def peak_60s(calls: list[dict]) -> int:
+    """Most tokens used inside any rolling 60 seconds (what the per-minute limit counts)."""
+    times = [(datetime.fromisoformat(c["time"]), c["total_tokens"]) for c in calls]
+    best = 0
+    for t0, _ in times:
+        best = max(best, sum(n for t, n in times if t0 <= t < t0 + timedelta(seconds=60)))
+    return best
+
+
+def report_usage(location: str, location_id, saved: bool) -> None:
+    """Prints this run's Groq usage and saves it to USAGE_FILE (default groq_usage.json)."""
+    total = sum(c["total_tokens"] for c in USAGE_CALLS)
+    p_in = sum(c["prompt_tokens"] for c in USAGE_CALLS)
+    p_out = sum(c["completion_tokens"] for c in USAGE_CALLS)
+    minutes = per_minute(USAGE_CALLS)
+    lines = [
+        f"=== GROQ TOKEN USAGE: {location} ===",
+        f"Model: {MODEL}",
+        f"Calls: {len(USAGE_CALLS)} answered, {USAGE_FAILED_CALLS} rejected (rate limit / broken output, not measured)",
+        f"Tokens: {total:,} total ({p_in:,} in, {p_out:,} out)",
+        f"Busiest 60 seconds: {peak_60s(USAGE_CALLS):,} tokens",
+        "Per minute (UTC): " + (", ".join(f"{m} {n:,}" for m, n in minutes.items()) or "-"),
+    ]
+    if USAGE_LIMITS:
+        lines.append("Groq limits: " + ", ".join(f"{k.replace('x-ratelimit-', '')}={v}"
+                                                  for k, v in sorted(USAGE_LIMITS.items())))
+    print("\n" + "\n".join(lines))
+    try:
+        with open(os.getenv("USAGE_FILE", "groq_usage.json"), "w", encoding="utf-8") as f:
+            json.dump({"location": location, "location_id": location_id, "run_index": RUN_INDEX,
+                       "model": MODEL, "saved": saved, "calls": USAGE_CALLS,
+                       "failed_calls": USAGE_FAILED_CALLS, "limits": USAGE_LIMITS}, f, indent=1)
+    except OSError as exc:
+        log.warning("Could not write the usage file: %s", exc)
+
+
 def call_groq(messages: list, api_key: str, max_retries: int = 3, tool_choice="auto") -> dict:
     """Calls Groq, automatically waiting and retrying on free-tier rate limits (429),
     and on the GPT-OSS-specific 'output_parse_failed' error (a known Groq issue where
@@ -681,6 +755,9 @@ def call_groq(messages: list, api_key: str, max_retries: int = 3, tool_choice="a
             timeout=60,
         )
 
+        global USAGE_FAILED_CALLS
+        if not response.ok:
+            USAGE_FAILED_CALLS += 1
         if response.status_code == 429 and attempt < max_retries:
             wait_seconds = 10 * (attempt + 1)  # simple backoff: 10s, 20s, 30s
             log.warning(
@@ -715,6 +792,7 @@ def call_groq(messages: list, api_key: str, max_retries: int = 3, tool_choice="a
         if not response.ok:
             log.error("Groq API error %s: %s", response.status_code, response.text)
         response.raise_for_status()
+        _record_usage(response)
         return response.json()
 
     raise RuntimeError("Exceeded max retries after repeated rate limiting / parse failures.")
@@ -1189,6 +1267,7 @@ def main() -> None:
                 break   # saved, or failed for a reason an earlier month won't fix
     finally:
         cleanup_temp_folders()
+        report_usage(args.location, args.location_id, _insight_saved)
         if args.location_id is not None:
             # Record that this location was attempted, whether or not it succeeded.
             # A failure here only logs a warning — it must not hide the real result.
