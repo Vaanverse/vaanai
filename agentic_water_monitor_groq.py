@@ -562,7 +562,7 @@ def tool_compute_water_extent(args: dict) -> dict:
         res = wc.band_resolution(green_files[0])   # 30 m (HLS) or 10 m (Sentinel-2)
         FOLDER_CLOUD[folder] = round(bad_pct * 100, 1)
         result = {
-            "water_area_km2": round(wc.water_area_km2(ndwi, pixel_area_m2=res * res), 3 if res < 30 else 2),
+            "water_area_km2": round(wc.water_area_km2(ndwi, pixel_area_m2=res * res), 3),   # 3 decimals: small ponds are < 0.01 km²
             "cloud_snow_masked_pct": round(bad_pct * 100, 1),
         }
         if bad_pct * 100 > MAX_CLOUD_TO_PUBLISH_PCT:
@@ -1009,11 +1009,12 @@ def _force_finalize(messages: list, api_key: str, computed: dict, folder_dates: 
     after_date = after_meta.get("scene_date") or after_meta["start_date"]
     b, a = computed[before_folder], computed[after_folder]
     pct = ((a - b) / b * 100) if b else 0.0
+    dec = 3 if max(a, b) < 1 else 2   # small ponds: 0.023 km², not "0.02"
     _handle_finalize(
         {
             "summary": (
-                f"Satellite pictures show the water surface at {location} measured {b:.2f} km² on {before_date} "
-                f"and {a:.2f} km² on {after_date}, a change of {a - b:+.2f} km² ({pct:+.1f}%).\n\n"
+                f"Satellite pictures show the water surface at {location} measured {b:.{dec}f} km² on {before_date} "
+                f"and {a:.{dec}f} km² on {after_date}, a change of {a - b:+.{dec}f} km² ({pct:+.1f}%).\n\n"
                 "This compares the same month one year apart, so normal seasonal ups and downs are largely "
                 "taken out of the comparison. A detailed explanation of the likely causes could not be "
                 "generated for this reading."
