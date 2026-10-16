@@ -10,7 +10,7 @@ git checkout dev
 
 
 git add .
-git commit -m "agent updated to look for 2 months data"
+git commit -m "agent and index updated for round off"
 git push -u origin dev      # the -u is only needed the very first push; just `git push` after that
 
 optional

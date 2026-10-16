@@ -7,3 +7,4 @@ Pillow>=10.0.0
 supabase>=2.0.0
 feedparser>=6.0.11
 trafilatura>=1.12.0
+shapely>=2.0.0

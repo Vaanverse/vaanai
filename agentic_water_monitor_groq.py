@@ -36,6 +36,7 @@ import tempfile
 import time
 from datetime import date, datetime, timedelta, timezone
 
+import numpy as np
 import requests
 from dotenv import load_dotenv
 
@@ -43,6 +44,7 @@ import extract_eo_data as eo
 import compute_water_change as wc
 import sentinel2_data as s2
 import storage_utils as storage
+import outline_utils
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -53,6 +55,8 @@ AOI_BBOX = None
 MEDIA_NEEDED = True  # set in main() from --media-needed; False = save the numbers only, no before/after images
 IST = timezone(timedelta(hours=5, minutes=30))   # India Standard Time; the daily run starts at 00:00 IST
 LOCATION_ID = None   # set in main() from --location-id; saved as water_insights.location_id
+OUTLINE = None       # the water body's shoreline (GeoJSON) from monitored_locations_water.outline, if mapped
+_OUTLINE_MASKS: dict = {}   # pixel size -> mask of the (widened) outline on the area grid
 RUN_INDEX = None     # set in main() from --run-index; saved as water_insights.run_index (which yearly cycle this is)
 
 # Quality gate: a result is only PUBLISHED if both pictures are mostly clear over
@@ -560,6 +564,17 @@ def tool_compute_water_extent(args: dict) -> dict:
             bad_pixel_mask=bad_mask, bbox=AOI_BBOX,
         )
         res = wc.band_resolution(green_files[0])   # 30 m (HLS) or 10 m (Sentinel-2)
+        if OUTLINE is not None and AOI_BBOX is not None:
+            # Count only this water body: water inside its outline (+ a margin), and
+            # judge cloud over the water body itself, not over the whole picture.
+            if res not in _OUTLINE_MASKS:
+                _OUTLINE_MASKS[res] = outline_utils.outline_mask(OUTLINE, AOI_BBOX, res)
+            inside = _OUTLINE_MASKS[res]
+            if inside.shape == ndwi.shape and inside.any():
+                ndwi = np.where(inside, ndwi, np.nan)
+                bad_pct = float(bad_mask[inside].mean())
+            else:
+                log.warning("Outline does not fit the area grid - measuring the whole area instead.")
         FOLDER_CLOUD[folder] = round(bad_pct * 100, 1)
         result = {
             "water_area_km2": round(wc.water_area_km2(ndwi, pixel_area_m2=res * res), 3),   # 3 decimals: small ponds are < 0.01 km²
@@ -816,8 +831,8 @@ def persist_result(final_args: dict, location: str) -> None:
         before_png = os.path.join(before_dir, "before.jpg")
         after_png = os.path.join(after_dir, "after.jpg")
 
-        storage.generate_preview_png(final_args["before_folder"], before_png, bbox=AOI_BBOX)
-        storage.generate_preview_png(final_args["after_folder"], after_png, bbox=AOI_BBOX)
+        storage.generate_preview_png(final_args["before_folder"], before_png, bbox=AOI_BBOX, outline=OUTLINE)
+        storage.generate_preview_png(final_args["after_folder"], after_png, bbox=AOI_BBOX, outline=OUTLINE)
 
         before_url = storage.upload_image(before_png)
         after_url = storage.upload_image(after_png)
@@ -1183,7 +1198,7 @@ def bbox_area_km2(bbox) -> float:
 
 
 def main() -> None:
-    global MODEL, AOI_BBOX, DATA_SOURCE, DATA_RES, MEDIA_NEEDED, LOCATION_ID, RUN_INDEX
+    global MODEL, AOI_BBOX, DATA_SOURCE, DATA_RES, MEDIA_NEEDED, LOCATION_ID, RUN_INDEX, OUTLINE
     load_dotenv()
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -1214,6 +1229,9 @@ def main() -> None:
     if args.location_id is not None:
         try:
             loc = storage.get_location(args.location_id) or {}
+            OUTLINE = outline_utils.parse_outline(loc.get("outline"))
+            log.info("Outline: %s", "mapped shoreline found - measuring this water body only" if OUTLINE
+                     else "none saved - measuring all water in the area (run fix_outlines.py)")
             where = ", ".join(x for x in (loc.get("place"), loc.get("district"), loc.get("state"), loc.get("country")) if x)
             context = (f"Where: {where}\n" if where else "") \
                 + (f"Type of water body: {loc['type']}\n" if loc.get("type") else "") \
