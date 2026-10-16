@@ -72,9 +72,12 @@ def _stretch_to_uint8(band: np.ndarray, max_reflectance: float = 3000) -> np.nda
     result[~valid_mask] = 0  # render fill/no-data pixels as black
     return result
 
-def generate_preview_png(folder: str, output_path: str, bbox=None) -> str:
+def generate_preview_png(folder: str, output_path: str, bbox=None, outline=None) -> str:
     """Builds a true-color (Red/Green/Blue) PNG from an HLSL30 scene folder
     and saves it to output_path. Returns output_path for convenience.
+
+    outline: the water body's shoreline (GeoJSON geometry). When given (with a
+    bbox), it is drawn on the picture as a border.
 
     HLSL30 (Landsat) true color = B04 (Red), B03 (Green), B02 (Blue).
     If you're using HLSS30 (Sentinel-2) instead, the band numbers for
@@ -99,6 +102,7 @@ def generate_preview_png(folder: str, output_path: str, bbox=None) -> str:
 
     rgb = np.dstack([red, green, blue])
     img = Image.fromarray(rgb, mode="RGB")
+    grid_w = img.width   # size before any resizing, to scale the outline below
 
     # Enlarge small previews. NEAREST + a whole-number factor turns each 30 m
     # satellite pixel into a crisp square block, instead of blurring it — the
@@ -115,6 +119,12 @@ def generate_preview_png(folder: str, output_path: str, bbox=None) -> str:
         scale = MAX_PREVIEW_PX / longest
         img = img.resize((max(1, round(img.width * scale)), max(1, round(img.height * scale))), Image.LANCZOS)
 
+    if outline is not None and bbox is not None:
+        try:
+            _draw_outline(img, outline, bbox, matches_res(folder), img.width / grid_w)
+        except Exception as exc:  # noqa: BLE001 - a missing border must never cost the picture
+            log.warning("Could not draw the outline on %s: %s", output_path, exc)
+
     # Format follows the file name: .jpg/.jpeg -> compressed JPEG (recommended),
     # .png -> lossless PNG (much larger; kept only for backward compatibility).
     if output_path.lower().endswith((".jpg", ".jpeg")):
@@ -124,6 +134,33 @@ def generate_preview_png(folder: str, output_path: str, bbox=None) -> str:
     log.info("Saved preview image: %s (%dx%d px, %.2f MB)", output_path, img.width, img.height,
              os.path.getsize(output_path) / 1_000_000)
     return output_path
+
+
+def matches_res(folder: str) -> int:
+    """Pixel size (m) of the scene in `folder`: 30 for NASA HLS, 10 for Sentinel-2."""
+    import glob
+    from compute_water_change import band_resolution
+    return band_resolution(sorted(glob.glob(os.path.join(folder, "*B04*.tif")))[0])
+
+
+OUTLINE_COLOUR = (255, 214, 0)     # bright yellow border, readable on water, fields and towns
+OUTLINE_HALO = (20, 20, 20)        # thin dark edge underneath, so it also shows on pale ground
+
+
+def _draw_outline(img, outline: dict, bbox, res: int, scale: float) -> None:
+    """Draws the water body's outline on img (in place). `scale` = how much the
+    picture was enlarged/shrunk after it was made from the satellite grid."""
+    from PIL import ImageDraw
+    from outline_utils import outline_rings_px
+
+    width = max(2, round(max(img.size) / 300))          # ~7 px on a 2000 px picture
+    draw = ImageDraw.Draw(img)
+    for ring in outline_rings_px(outline, bbox, res):
+        pts = [(x * scale, y * scale) for x, y in ring]
+        if len(pts) < 2:
+            continue
+        draw.line(pts, fill=OUTLINE_HALO, width=width + 2, joint="curve")
+        draw.line(pts, fill=OUTLINE_COLOUR, width=width, joint="curve")
 
 
 def get_supabase_client():
@@ -259,6 +296,18 @@ def save_insight(record: dict) -> None:
     log.info("%s insight row (id=%s, created_at=%s) for %s: %s -> %s.",
              action, saved.get("id", "n/a"), saved.get("created_at"), record["location"],
              record["before_date"], record["after_date"])
+
+
+def get_location(location_id: int) -> dict | None:
+    """One row of monitored_locations_water (name, place, district, type, uses,
+    outline, ...), or None if there is no such id."""
+    client = get_supabase_client()
+
+    def _read():
+        return client.table("monitored_locations_water").select("*").eq("id", location_id).limit(1).execute()
+
+    rows = with_retries("Reading location details", _read).data or []
+    return rows[0] if rows else None
 
 
 def get_cycle_insights(location_id: int) -> list[dict]:
