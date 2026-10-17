@@ -131,11 +131,27 @@ def dist_km(geom, lon: float, lat: float) -> float:
     return d * KM_PER_DEG
 
 
+LANDSCAPE = 16 / 10          # picture shape (width / height) - same as the website's before/after viewer
+
+
 def padded_bbox(geom) -> tuple[float, float, float, float]:
+    """The outline's box + margin, then widened (or heightened) to a 16:10
+    LANDSCAPE shape, so every picture has the same shape as the website's
+    viewer and the whole water body is visible. The extra area is only land
+    around the lake - the measurement counts water inside the outline only."""
     min_lon, min_lat, max_lon, max_lat = geom.bounds
     mx = max((max_lon - min_lon) * MARGIN_FRACTION, MIN_MARGIN_DEG)
     my = max((max_lat - min_lat) * MARGIN_FRACTION, MIN_MARGIN_DEG)
-    return (round(min_lon - mx, 5), round(min_lat - my, 5), round(max_lon + mx, 5), round(max_lat + my, 5))
+    min_lon, max_lon, min_lat, max_lat = min_lon - mx, max_lon + mx, min_lat - my, max_lat + my
+    k = math.cos(math.radians((min_lat + max_lat) / 2))      # km per degree of longitude, relative
+    w, h = (max_lon - min_lon) * k, (max_lat - min_lat)        # in "latitude degrees"
+    if w / h < LANDSCAPE:                                      # too tall -> add land left and right
+        extra = (h * LANDSCAPE - w) / k / 2
+        min_lon, max_lon = min_lon - extra, max_lon + extra
+    else:                                                      # too wide -> add land above and below
+        extra = (w / LANDSCAPE - h) / 2
+        min_lat, max_lat = min_lat - extra, max_lat + extra
+    return (round(min_lon, 5), round(min_lat, 5), round(max_lon, 5), round(max_lat, 5))
 
 
 def box_km(b) -> str:
@@ -346,7 +362,9 @@ def from_cache(row: dict, hit: dict) -> dict:
     rec = {"id": row["id"], "name": row["name"], "district": row.get("district") or "", "old_bbox": old,
            "source": "", "osm_name": "", **hit,
            "geom": shape(hit["outline"]) if hit.get("outline") else None}
-    if rec.get("new_bbox"):
+    if rec["geom"] is not None:
+        rec["new_bbox"] = padded_bbox(rec["geom"])     # always the current box rule (16:10 landscape)
+    elif rec.get("new_bbox"):
         rec["new_bbox"] = tuple(rec["new_bbox"])
     return rec
 
