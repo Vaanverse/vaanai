@@ -195,6 +195,10 @@ dialog[open]{animation:pop .3s cubic-bezier(.2,.8,.2,1)}
 .compare{position:relative;aspect-ratio:16/10;border-radius:14px;overflow:hidden;background:var(--blue-soft);max-width:100%;user-select:none;touch-action:pan-y}
 .compare canvas,.compare img{position:absolute;inset:0;width:100%;height:100%;display:block;object-fit:cover}
 .compare .after{clip-path:inset(0 0 0 var(--pos,50%))}
+/* Real satellite pictures: the frame takes the picture's own shape (tall lakes stay tall)
+   and shrinks to fit the screen height, so the whole water body is visible - never cropped. */
+.compare.fit{aspect-ratio:var(--ar);width:min(100%,calc(64vh * var(--ar)));margin-inline:auto;background:#0b1424}
+.compare.fit img{object-fit:contain}
 .compare .divider{position:absolute;top:0;bottom:0;left:var(--pos,50%);width:2px;background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.2);pointer-events:none}
 .compare .knob{position:absolute;top:50%;left:var(--pos,50%);transform:translate(-50%,-50%);width:38px;height:38px;border-radius:50%;background:#fff;color:#0a2f6b;display:grid;place-items:center;box-shadow:0 4px 14px rgba(0,0,0,.3);pointer-events:none}
 .compare input[type=range]{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:ew-resize;margin:0}
@@ -900,9 +904,17 @@ function openDetail(id, recIdx = 0){
     paint(cmp.querySelector('.after'), s.cat, seed, levelFor(r, 'a'), 320, 200);
   };
   if (!realPics) paintCmp();
-  else cmp.querySelectorAll('img').forEach(img => img.addEventListener('error', () => {
+  else {
+    // Fit the frame to the picture's own shape once its size is known.
+    const fit = img => { if (img.naturalWidth && img.naturalHeight) {
+      cmp.style.setProperty('--ar', (img.naturalWidth / img.naturalHeight).toFixed(4)); cmp.classList.add('fit'); } };
+    const first = cmp.querySelector('img.before');
+    if (first.complete) fit(first); else first.addEventListener('load', () => fit(first), { once: true });
+  }
+  if (realPics) cmp.querySelectorAll('img').forEach(img => img.addEventListener('error', () => {
     // A stored picture failed to load: swap both for the illustrative drawing.
     if (!cmp.querySelector('img')) return;
+    cmp.classList.remove('fit');
     cmp.querySelectorAll('img').forEach(i => { const cv = document.createElement('canvas'); cv.className = i.className; i.replaceWith(cv); });
     paintCmp();
   }, { once: true }));
