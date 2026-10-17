@@ -38,8 +38,15 @@ USAGE (from the earth_monitor folder, venv active, same .env as the agent)
     python fix_outlines.py --upload             # only rows with status OK
     python fix_outlines.py --upload --include-review   # also the REVIEW ones you checked
 
-    # Only some water bodies (by id):
+    # Only some water bodies (by id) - the review files still list all of them:
     python fix_outlines.py --ids 17 23 41
+
+    # Just rebuild the review files from the saved results (no searching):
+    python fix_outlines.py --review-only
+
+    # Use hand-drawn outlines + earlier results, never search (e.g. for the upload):
+    python fix_outlines.py --no-search
+    python fix_outlines.py --no-search --upload --include-review
 
 Each lookup is saved in locations/outlines_cache.json as soon as it is done, so
 you can stop the script (Ctrl+C) and run it again: it continues where it left
@@ -337,7 +344,8 @@ def to_cache(rec: dict) -> dict:
 def from_cache(row: dict, hit: dict) -> dict:
     old = (row["min_lon"], row["min_lat"], row["max_lon"], row["max_lat"])
     rec = {"id": row["id"], "name": row["name"], "district": row.get("district") or "", "old_bbox": old,
-           "geom": shape(hit["outline"]) if hit.get("outline") else None, **hit}
+           "source": "", "osm_name": "", **hit,
+           "geom": shape(hit["outline"]) if hit.get("outline") else None}
     if rec.get("new_bbox"):
         rec["new_bbox"] = tuple(rec["new_bbox"])
     return rec
@@ -447,36 +455,58 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--upload", action="store_true", help="save outlines + new boxes to Supabase")
     ap.add_argument("--include-review", action="store_true", help="with --upload: also save REVIEW rows")
-    ap.add_argument("--ids", type=int, nargs="*", help="only these monitored_locations_water ids")
+    ap.add_argument("--ids", type=int, nargs="*",
+                    help="look up only these monitored_locations_water ids (the review files still list all)")
     ap.add_argument("--refresh", action="store_true",
                     help="ignore results saved by earlier runs and look everything up again")
+    ap.add_argument("--no-search", action="store_true",
+                    help="never search OpenStreetMap: use hand-drawn outlines and results found earlier only")
+    ap.add_argument("--review-only", action="store_true",
+                    help="only rebuild the review files from saved results - no searching, nothing uploaded")
     args = ap.parse_args()
     load_dotenv(HERE / ".env")
 
     sys.path.insert(0, str(HERE))
     from storage_utils import get_supabase_client   # same credentials as the agent
     client = get_supabase_client()
-    q = client.table(TABLE).select("*").order("id")
-    if args.ids:
-        q = q.in_("id", args.ids)
-    rows = q.execute().data or []
+    # All ACTIVE water bodies (inactive ones, e.g. replaced river stretches, are skipped).
+    rows = client.table(TABLE).select("*").eq("active", True).order("id").execute().data or []
+    selected = set(args.ids) if args.ids else {r["id"] for r in rows}
+    if args.review_only:
+        selected = set()
     manual = load_manual()
-    print(f"Looking up {len(rows)} water bodies"
+    todo = sum(r["id"] in selected for r in rows)
+    print(f"{len(rows)} active water bodies; working on {todo}"
           + (f" ({len(manual)} hand-drawn outline(s) found)" if manual else "") + " ...\n")
 
     # Earlier lookups are reused (so a stopped run continues where it left off,
     # and --upload doesn't look everything up again). Failed lookups are retried.
+    # Rows not selected with --ids are taken from the saved results as they are,
+    # so the review files always show ALL water bodies.
     cache = {} if args.refresh else load_cache()
     recs = []
     for i, row in enumerate(rows, 1):
         hit = cache.get(row["id"])
+        if row["id"] not in selected:
+            if KEEP_BOX.search(row["name"]):
+                hit = {"status": KEEP_BOX_STATUS}
+            r = from_cache(row, hit) if hit else from_cache(row, {"status": "NOT LOOKED UP YET"})
+            recs.append(r)
+            continue
         reuse = (hit and hit["status"].startswith(("OK", "REVIEW"))
                  and not KEEP_BOX.search(row["name"])
                  and not (manual.get(row["id"]) or manual.get(row["name"].strip().lower())))
+        is_manual = bool(manual.get(row["id"]) or manual.get(row["name"].strip().lower()))
         if reuse:
             r, note = from_cache(row, hit), "  (saved earlier)"
+        elif args.no_search and not is_manual and not KEEP_BOX.search(row["name"]):
+            # --no-search: keep whatever was found before (NOT FOUND etc.) without searching
+            r = from_cache(row, hit) if hit else from_cache(row, {"status": "NOT LOOKED UP YET"})
+            recs.append(r)
+            continue
         else:
-            print(f"{i:3d}/{len(rows)} #{row['id']:<4} {row['name'][:42]} - looking up ...", flush=True)
+            if not is_manual:
+                print(f"{i:3d}/{len(rows)} #{row['id']:<4} {row['name'][:42]} - looking up ...", flush=True)
             r, note = resolve(row, manual), ""
             cache[row["id"]] = to_cache(r)
             save_cache(cache)
@@ -495,8 +525,8 @@ def main() -> None:
         print(f"   #{r['id']:<4} {r['name']}: {r['status']}")
     print(f"\nReview table: {REVIEW_CSV}\nMap:          {REVIEW_GEOJSON}  (open at https://geojson.io)")
 
-    if args.upload:
-        n = upload(client, recs, args.include_review)
+    if args.upload and not args.review_only:
+        n = upload(client, [r for r in recs if r["id"] in selected], args.include_review)
         print(f"\nSaved {n} outline(s) and box(es) to Supabase.")
     else:
         print("\nNothing was changed in Supabase. When the map looks right, run again with --upload.")

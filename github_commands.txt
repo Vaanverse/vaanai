@@ -10,14 +10,21 @@ git checkout dev
 
 
 git add .
-git commit -m "agent and index updated for round off"
-git push -u origin dev      # the -u is only needed the very first push; just `git push` after that
-
-optional
+git commit -m "boundaries"
 git push origin dev
 
+
+optional
+git push -u origin dev      # the -u is only needed the very first push; just `git push` after that
+
+
+
+
 git checkout main
+
+optional
 git pull origin main
+
 git merge dev
 git push origin main
 
